@@ -1,0 +1,39 @@
+<html>
+    <head>
+        <title>HSL Grid</title>
+        <script src="./js/four_colour_encoding.js"></script>
+        <link href="./style.css" rel="stylesheet" />
+    </head>
+    <body style="background: black;">
+        <canvas width="1024" height="1024" style="background: transparent"></canvas>
+        
+        <div style="margin-top: 2em">
+
+        <div class="options">
+            <label>Inner cell divisions:</label>
+            <select id="innerCellDivisions">
+                <option value="2">2</option>
+                <option value="4">4</option>
+                <option value="8">8</option>
+                <option value="16">16</option>
+                <option value="32" selected>32</option>
+            </select>
+        </div>
+
+   
+
+        <div class="options">
+            <input type="text" id="filename" value="image"/>
+        </div>
+
+        <div class="options">
+            <button id="downloadBtn">Save</button>
+        </div>
+
+        </div>
+
+
+
+        
+    </body>
+</html>
