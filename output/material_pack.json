@@ -6,10 +6,23 @@
   "grid_size_non_metallic": 16,
   "grid_size_metallic": 16,
   "materials": {
-    "Brushed Steel": {
+    "Blue Steel": {
       "metallic": true,
       "grid_pos": [
         0,
+        0
+      ],
+      "base_color": [
+        0.0,
+        0.434531,
+        0.800007
+      ],
+      "roughness": 0.1
+    },
+    "Brushed Steel": {
+      "metallic": true,
+      "grid_pos": [
+        1,
         0
       ],
       "base_color": [
@@ -32,10 +45,23 @@
       ],
       "roughness": 0.9
     },
+    "Dark Grey": {
+      "metallic": false,
+      "grid_pos": [
+        1,
+        0
+      ],
+      "base_color": [
+        0.026443,
+        0.026443,
+        0.026443
+      ],
+      "roughness": 1.0
+    },
     "Glass": {
       "metallic": true,
       "grid_pos": [
-        1,
+        2,
         0
       ],
       "base_color": [
@@ -44,6 +70,45 @@
         0.8
       ],
       "roughness": 0.0
+    },
+    "Green Metal": {
+      "metallic": true,
+      "grid_pos": [
+        3,
+        0
+      ],
+      "base_color": [
+        0.00345,
+        0.800016,
+        0.0
+      ],
+      "roughness": 0.188442
+    },
+    "Pink Diffuse": {
+      "metallic": false,
+      "grid_pos": [
+        2,
+        0
+      ],
+      "base_color": [
+        0.594461,
+        0.086702,
+        0.800007
+      ],
+      "roughness": 1.0
+    },
+    "Red Dawn": {
+      "metallic": false,
+      "grid_pos": [
+        3,
+        0
+      ],
+      "base_color": [
+        0.800007,
+        0.0,
+        0.000859
+      ],
+      "roughness": 0.349246
     }
   }
 }

@@ -81,7 +81,7 @@ const draw = () => {
                     
                     ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${a})`
                 
-                    ctx.fillRect(x + bx, CanvasHeight - (y + ay), InnerCellWidth, InnerCellWidth)
+                    ctx.fillRect(x + bx, y + ay, InnerCellWidth, InnerCellWidth)
 
                     minR = Math.min(r, minR)
                     minG = Math.min(g, minG)
