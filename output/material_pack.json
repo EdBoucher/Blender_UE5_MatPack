@@ -1,0 +1,49 @@
+{
+  "image_size": [
+    512,
+    512
+  ],
+  "grid_size_non_metallic": 16,
+  "grid_size_metallic": 16,
+  "materials": {
+    "Brushed Steel": {
+      "metallic": true,
+      "grid_pos": [
+        0,
+        0
+      ],
+      "base_color": [
+        0.405097,
+        0.365983,
+        0.316225
+      ],
+      "roughness": 0.3
+    },
+    "Concrete": {
+      "metallic": false,
+      "grid_pos": [
+        0,
+        0
+      ],
+      "base_color": [
+        0.202503,
+        0.202503,
+        0.202503
+      ],
+      "roughness": 0.9
+    },
+    "Glass": {
+      "metallic": true,
+      "grid_pos": [
+        1,
+        0
+      ],
+      "base_color": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "roughness": 0.0
+    }
+  }
+}

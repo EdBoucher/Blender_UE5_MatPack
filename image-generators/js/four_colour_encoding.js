@@ -40,7 +40,6 @@ const draw = () => {
 
     const CanvasWidth = Canvas.width;
     const CanvasHeight = Canvas.height;
-    const CellWidth = CanvasWidth / NumCells;
 
     ctx.clearRect(0, 0, CanvasWidth, CanvasHeight);
 
@@ -74,11 +73,15 @@ const draw = () => {
 
                 for (let l = 0; l < NumCells; l++) {
                     let a = 1 / (NumCells - 1) * l;
+                    
+                    // Blender has this very annoying habit of discarding all colour information if the alpha is 0,
+                    // so clamping this to the minimum value
+                    a = Math.max(a, 1 / 255)
                     let ay = l * InnerCellWidth;
                     
                     ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${a})`
-                    
-                    ctx.fillRect(x + bx, y + ay, InnerCellWidth, InnerCellWidth)
+                
+                    ctx.fillRect(x + bx, CanvasHeight - (y + ay), InnerCellWidth, InnerCellWidth)
 
                     minR = Math.min(r, minR)
                     minG = Math.min(g, minG)
@@ -91,16 +94,8 @@ const draw = () => {
                     maxA = Math.max(a, maxA)
                 }
             }
-
-
         }
-
     }
-
-    console.log('Outer width', OuterCellWidth, 'Inner width', InnerCellWidth)
-    console.log(minR, maxR, minG, maxG, minB, maxB, minA, maxA)
-
-   
 }
 
 function getBase64Image(canvas) {
@@ -109,8 +104,6 @@ function getBase64Image(canvas) {
 }
 
 function downloadURI(uri, name) {
-    // IE10+ : (has Blob, but not a[download] or URL)
-
     const link = document.createElement('a');
     link.download = name;
     link.href = uri;
