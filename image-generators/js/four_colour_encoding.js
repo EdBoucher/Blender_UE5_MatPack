@@ -57,6 +57,8 @@ const draw = () => {
     let maxB = 0
     let maxA = 0
     
+    ctx.scale(1, 1)
+    ctx.translate(0, -InnerCellWidth)
 
     for (let i = 0; i < NumCells; i++) {
         const x = OuterCellWidth * i;
@@ -76,12 +78,14 @@ const draw = () => {
                     
                     // Blender has this very annoying habit of discarding all colour information if the alpha is 0,
                     // so clamping this to the minimum value
-                    a = Math.max(a, 1 / 255)
+                    
+                    a = Math.max(2/255, a)
+                    
                     let ay = l * InnerCellWidth;
                     
                     ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${a})`
                 
-                    ctx.fillRect(x + bx, y + ay, InnerCellWidth, InnerCellWidth)
+                    ctx.fillRect(x + bx, CanvasHeight - (y + ay), InnerCellWidth, InnerCellWidth)
 
                     minR = Math.min(r, minR)
                     minG = Math.min(g, minG)

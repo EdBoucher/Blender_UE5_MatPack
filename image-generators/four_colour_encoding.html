@@ -1,12 +1,18 @@
 <html>
     <head>
-        <title>HSL Grid</title>
+        <title>Four Colour Encoding</title>
         <script src="./js/four_colour_encoding.js"></script>
         <link href="./style.css" rel="stylesheet" />
     </head>
     <body style="background: black;">
-        <canvas width="1024" height="1024" style="background: transparent"></canvas>
+        <canvas width="1024" height="1024" style="background: transparent; border: 1px solid white"></canvas>
         
+        <div class="warning">
+            <h2>Don't use this.</h2>
+            <p>This was the original code I wrote out to generate an encoding grid as I didn't want to muck around with libraries.</p>
+            <p>Unfortunately, HTML5 Canvas doesn't write the correct value the red, green, and blue channels when alpha is 0, which leads to some weird results when reading it as a texture. The code has since been migrated to the Python plugin, where it works as intended. But in Python!</p>
+        </div>
+
         <div style="margin-top: 2em">
 
         <div class="options">

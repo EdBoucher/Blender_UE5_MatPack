@@ -67,7 +67,7 @@ def map_four_values_to_grid(numCells, outer_x, outer_y, inner_x, inner_y):
     u = ox * mainCellWidth + ix * innerCellWidth + toCentre
     v = oy * mainCellWidth + iy * innerCellWidth + toCentre
 
-    return (u, 1.0 - v)
+    return (u, v)
 
 
 def material_property_id(metallic, base_color, roughness, precision=4):
@@ -143,12 +143,12 @@ def resolve_source_value(mesh, poly, obj, source_name):
             return principled.inputs["Emission Strength"].default_value
 
     attr = mesh.attributes.get(source_name)
-    if attr and attr.data_type == 'FLOAT':
+    if attr and attr.data_type in ('FLOAT', 'INT', 'BOOLEAN'):
         if attr.domain == 'FACE':
-            return attr.data[poly.index].value
+            return float(attr.data[poly.index].value)
         elif attr.domain == 'POINT':
             verts = [mesh.loops[li].vertex_index for li in poly.loop_indices]
-            return sum(attr.data[vi].value for vi in verts) / len(verts)
+            return sum(float(attr.data[vi].value) for vi in verts) / len(verts)
     return 0.0
 
 
@@ -249,10 +249,80 @@ def encode_uv2(obj, props, ignore_name=""):
             outer_y = apply_range_mode(raw_oy, props.uv2_range_v, oy_min, oy_max)
             inner_x = apply_range_mode(raw_ix, props.uv2_range_inner_x, ix_min, ix_max)
             inner_y = apply_range_mode(raw_iy, props.uv2_range_inner_y, iy_min, iy_max)
-            grid_uv = map_four_values_to_grid(32, outer_x, outer_y, inner_x, inner_y)
+            grid_uv = map_four_values_to_grid(
+                int(props.encoding_grid_size), outer_x, outer_y, inner_x, inner_y
+            )
             for li in poly.loop_indices:
                 uv2.data[li].uv = grid_uv
                 count += 1
+
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Vertex Color Encoding
+# ---------------------------------------------------------------------------
+
+def encode_vertex_colors(obj, props, ignore_name=""):
+    """Write attribute values into a vertex color layer (per-loop). Returns loop count."""
+    if not props.vcol_enabled:
+        return 0
+
+    mesh = obj.data
+    target_name = props.vcol_target_name.strip()
+    if not target_name:
+        return 0
+
+    # Handle existing color attribute
+    existing = mesh.color_attributes.get(target_name)
+    if existing:
+        if not props.vcol_overwrite:
+            return 0
+        mesh.color_attributes.remove(existing)
+
+    color_attr = mesh.color_attributes.new(
+        name=target_name, type='BYTE_COLOR', domain='CORNER'
+    )
+
+    # Channel config: (source_name, range_mode)
+    channels = [
+        (props.vcol_source_r, props.vcol_range_r),
+        (props.vcol_source_g, props.vcol_range_g),
+        (props.vcol_source_b, props.vcol_range_b),
+        (props.vcol_source_a, props.vcol_range_a),
+    ]
+
+    # Pre-pass for NORMALIZE
+    sources_to_normalize = list({
+        src for src, mode in channels if mode == 'NORMALIZE' and src.strip()
+    })
+    norm_ranges = {}
+    if sources_to_normalize:
+        norm_ranges = _gather_normalize_ranges(
+            mesh, obj, ignore_name, sources_to_normalize
+        )
+
+    # Write pass
+    count = 0
+    for poly in mesh.polygons:
+        if _is_ignored_poly(poly, obj, ignore_name):
+            continue
+
+        raw = []
+        for src, _mode in channels:
+            if src.strip():
+                raw.append(resolve_source_value(mesh, poly, obj, src))
+            else:
+                raw.append(0.0)
+
+        values = []
+        for i, (src, mode) in enumerate(channels):
+            mn, mx = norm_ranges.get(src, (None, None))
+            values.append(apply_range_mode(raw[i], mode, mn, mx))
+
+        for li in poly.loop_indices:
+            color_attr.data[li].color = (values[0], values[1], values[2], values[3])
+            count += 1
 
     return count
 
@@ -447,6 +517,55 @@ def save_image(image, output_path):
     image.filepath_raw = path
     image.file_format = 'PNG'
     image.save()
+
+
+def generate_encoding_grid(num_cells):
+    """Create the four-colour encoding grid texture.
+
+    The image has dimensions (num_cells^2) x (num_cells^2).
+    Outer grid position encodes R (x) and G (y).
+    Inner grid position encodes B (x) and A (y).
+    Values are evenly spaced across [0, 1] with alpha clamped to min 2/255.
+    Image origin is bottom-left to match UV coordinate space.
+
+    Returns the bpy.types.Image.
+    """
+    size = num_cells * num_cells
+    img_name = "EncodingGrid"
+    if img_name in bpy.data.images:
+        bpy.data.images.remove(bpy.data.images[img_name])
+
+    image = bpy.data.images.new(img_name, size, size, alpha=True)
+    image.colorspace_settings.name = 'Linear Rec.709'
+
+    pixels = [0.0] * (size * size * 4)
+    norm_inc = 1.0 / (num_cells - 1) if num_cells > 1 else 1.0
+    min_alpha = 0
+
+    outer_cell_w = num_cells  # in pixels
+    inner_cell_w = 1          # in pixels
+
+    for i in range(num_cells):         # outer X → R
+        r = norm_inc * i
+        for j in range(num_cells):     # outer Y → G
+            g = norm_inc * j
+            for k in range(num_cells): # inner X → B
+                b = norm_inc * k
+                for l in range(num_cells):  # inner Y → A
+                    a = max(norm_inc * l, min_alpha)
+
+                    px = i * outer_cell_w + k * inner_cell_w
+                    py = j * outer_cell_w + l * inner_cell_w
+
+                    idx = (py * size + px) * 4
+                    pixels[idx] = r
+                    pixels[idx + 1] = g
+                    pixels[idx + 2] = b
+                    pixels[idx + 3] = a
+
+    image.pixels[:] = pixels
+    image.pack()
+    return image
 
 
 # ---------------------------------------------------------------------------
@@ -796,6 +915,9 @@ def process_single_object(context, props, source, materials_data, grid_nm, grid_
     # Encode uv2 (attribute encoding)
     encode_uv2(duplicate, props, ignore_name)
 
+    # Encode vertex colors
+    encode_vertex_colors(duplicate, props, ignore_name)
+
     # Material management
     if props.delete_materials:
         _reassign_materials(duplicate, ignore_mat, props.target_material)
@@ -937,6 +1059,24 @@ class MaterialPackProperties(PropertyGroup):
         default=False,
     )
 
+    # Encoding Grid
+    encoding_grid_size: EnumProperty(
+        name="Number of Cells",
+        description="Grid resolution for four-colour encoding texture",
+        items=[
+            ('8', "8", "8x8 grid (4096 combinations)"),
+            ('16', "16", "16x16 grid (65536 combinations)"),
+            ('32', "32", "32x32 grid (1048576 combinations)"),
+        ],
+        default='32',
+    )
+    encoding_grid_output_path: StringProperty(
+        name="Output Path",
+        description="File path for the encoding grid PNG",
+        subtype='FILE_PATH',
+        default="//encoding_grid.png",
+    )
+
     # UV2 Encoding
     uv2_mode: EnumProperty(
         name="UV2 Mode",
@@ -990,6 +1130,67 @@ class MaterialPackProperties(PropertyGroup):
         description="How to handle values outside [0, 1] for inner grid Y",
         items=_RANGE_MODES_NO_NONE,
         default='WRAP',
+    )
+
+    # Vertex Color Encoding
+    vcol_enabled: BoolProperty(
+        name="Enable Vertex Colors",
+        description="Encode attributes into a vertex color layer",
+        default=False,
+    )
+    vcol_target_name: StringProperty(
+        name="Target",
+        description="Name of the color attribute to create",
+        default="VertexColor",
+    )
+    vcol_overwrite: BoolProperty(
+        name="Overwrite Existing",
+        description="Overwrite the color attribute if it already exists",
+        default=False,
+    )
+    vcol_source_r: StringProperty(
+        name="R Source",
+        description="Float attribute name or material property (roughness/metallic/emission) for R channel",
+        default="",
+    )
+    vcol_source_g: StringProperty(
+        name="G Source",
+        description="Float attribute name or material property for G channel",
+        default="",
+    )
+    vcol_source_b: StringProperty(
+        name="B Source",
+        description="Float attribute name or material property for B channel",
+        default="",
+    )
+    vcol_source_a: StringProperty(
+        name="A Source",
+        description="Float attribute name or material property for A channel",
+        default="",
+    )
+    vcol_range_r: EnumProperty(
+        name="R Range",
+        description="How to handle values outside [0, 1] for R channel",
+        items=_RANGE_MODES,
+        default='CLAMP',
+    )
+    vcol_range_g: EnumProperty(
+        name="G Range",
+        description="How to handle values outside [0, 1] for G channel",
+        items=_RANGE_MODES,
+        default='CLAMP',
+    )
+    vcol_range_b: EnumProperty(
+        name="B Range",
+        description="How to handle values outside [0, 1] for B channel",
+        items=_RANGE_MODES,
+        default='CLAMP',
+    )
+    vcol_range_a: EnumProperty(
+        name="A Range",
+        description="How to handle values outside [0, 1] for A channel",
+        items=_RANGE_MODES,
+        default='CLAMP',
     )
 
 
@@ -1065,6 +1266,33 @@ class MATERIALPACK_OT_generate_image(Operator):
             f"Material Pack: {len(materials)} materials → "
             f"{grid_nm}x{grid_nm} / {grid_m}x{grid_m} grid. "
             f"Saved to {bpy.path.abspath(props.output_path)}",
+        )
+        return {'FINISHED'}
+
+
+class MATERIALPACK_OT_generate_encoding_grid(Operator):
+    bl_idname = "materialpack.generate_encoding_grid"
+    bl_label = "Generate Encoding Texture"
+    bl_description = "Generate the four-colour encoding grid texture"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        props = context.scene.material_pack
+
+        output_path = props.encoding_grid_output_path.strip()
+        if not output_path:
+            self.report({'ERROR'}, "Output path cannot be empty")
+            return {'CANCELLED'}
+
+        num_cells = int(props.encoding_grid_size)
+        image = generate_encoding_grid(num_cells)
+        save_image(image, output_path)
+
+        size = num_cells * num_cells
+        self.report(
+            {'INFO'},
+            f"Encoding grid: {num_cells}x{num_cells} cells, "
+            f"{size}x{size}px. Saved to {bpy.path.abspath(output_path)}",
         )
         return {'FINISHED'}
 
@@ -1301,7 +1529,7 @@ class MATERIALPACK_PT_input(Panel):
 
 
 class MATERIALPACK_PT_image(Panel):
-    bl_label = "Image Settings"
+    bl_label = "Material Atlas Settings"
     bl_idname = "MATERIALPACK_PT_image"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -1323,7 +1551,7 @@ class MATERIALPACK_PT_image(Panel):
 
 
 class MATERIALPACK_PT_texgen(Panel):
-    bl_label = "Texture Generation"
+    bl_label = "Material Atlas Generation"
     bl_idname = "MATERIALPACK_PT_texgen"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -1345,6 +1573,37 @@ class MATERIALPACK_PT_texgen(Panel):
             layout.label(text=f"{total} Materials: {nm} non-metallic, {mt} metallic")
 
         layout.operator("materialpack.generate_image", icon='IMAGE_DATA')
+
+
+class MATERIALPACK_PT_encoding_grid_settings(Panel):
+    bl_label = "Encoding Grid Settings"
+    bl_idname = "MATERIALPACK_PT_encoding_grid_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "MatPack"
+    bl_parent_id = "MATERIALPACK_PT_main"
+    bl_options = set()
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.material_pack
+        layout.prop(props, "encoding_grid_size")
+
+
+class MATERIALPACK_PT_encoding_grid_gen(Panel):
+    bl_label = "Encoding Grid Generation"
+    bl_idname = "MATERIALPACK_PT_encoding_grid_gen"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "MatPack"
+    bl_parent_id = "MATERIALPACK_PT_main"
+    bl_options = set()
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.material_pack
+        layout.prop(props, "encoding_grid_output_path")
+        layout.operator("materialpack.generate_encoding_grid", icon='IMAGE_DATA')
 
 
 class MATERIALPACK_PT_processing(Panel):
@@ -1437,6 +1696,43 @@ class MATERIALPACK_PT_uv2(Panel):
             layout.label(text="Attribute name, or: roughness / metallic / emission", icon='INFO')
 
 
+class MATERIALPACK_PT_vcol(Panel):
+    bl_label = "Vertex Color Encoding"
+    bl_idname = "MATERIALPACK_PT_vcol"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "MatPack"
+    bl_parent_id = "MATERIALPACK_PT_main"
+    bl_options = set()
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.material_pack
+
+        layout.prop(props, "vcol_enabled")
+
+        if not props.vcol_enabled:
+            return
+
+        layout.prop(props, "vcol_target_name")
+        layout.prop(props, "vcol_overwrite")
+
+        row = layout.row(align=True)
+        row.prop(props, "vcol_source_r", text="R")
+        row.prop(props, "vcol_range_r", text="")
+        row = layout.row(align=True)
+        row.prop(props, "vcol_source_g", text="G")
+        row.prop(props, "vcol_range_g", text="")
+        row = layout.row(align=True)
+        row.prop(props, "vcol_source_b", text="B")
+        row.prop(props, "vcol_range_b", text="")
+        row = layout.row(align=True)
+        row.prop(props, "vcol_source_a", text="A")
+        row.prop(props, "vcol_range_a", text="")
+
+        layout.label(text="Attribute name, or: roughness / metallic / emission", icon='INFO')
+
+
 class MATERIALPACK_PT_actions(Panel):
     bl_label = "Process"
     bl_idname = "MATERIALPACK_PT_actions"
@@ -1459,15 +1755,19 @@ class MATERIALPACK_PT_actions(Panel):
 classes = (
     MaterialPackProperties,
     MATERIALPACK_OT_generate_image,
+    MATERIALPACK_OT_generate_encoding_grid,
     MATERIALPACK_OT_process_object,
     MATERIALPACK_OT_process_collection,
     MATERIALPACK_PT_main,
     MATERIALPACK_PT_input,
     MATERIALPACK_PT_image,
     MATERIALPACK_PT_texgen,
+    MATERIALPACK_PT_encoding_grid_settings,
+    MATERIALPACK_PT_encoding_grid_gen,
     MATERIALPACK_PT_processing,
     MATERIALPACK_PT_cleanup,
     MATERIALPACK_PT_uv2,
+    MATERIALPACK_PT_vcol,
     MATERIALPACK_PT_actions,
 )
 

@@ -6,3 +6,17 @@ body {
 .options {
     margin: 1em;
 }
+
+h2 {
+    margin-top: 0;
+    margin-left: 0;
+    margin-right: 0;
+}
+
+.warning {
+    margin-top: 2em;
+    padding: 2em;
+    max-width: 1024px;
+    border: 2px solid red;
+    border-radius: 1em;
+}
