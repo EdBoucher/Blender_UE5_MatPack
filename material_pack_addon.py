@@ -1,15 +1,16 @@
 bl_info = {
-    "name": "Material Pack",
-    "author": "Syntify",
-    "version": (1, 1, 0),
+    "name": "MatPack",
+    "author": "Ed Boucher",
+    "version": (0, 1, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > MatPack",
-    "description": "Pack material properties into a texture atlas and remap UVs",
+    "description": "MatPack extracts material properties into a texture atlas, and remaps the UVs of models to match. It also allows encoding arbitrary mesh attributes to another UV map.",
     "category": "Material",
 }
 
 import bpy
 import bmesh
+import hashlib
 import json
 import math
 import os
@@ -69,6 +70,19 @@ def map_four_values_to_grid(numCells, outer_x, outer_y, inner_x, inner_y):
     return (u, 1.0 - v)
 
 
+def material_property_id(metallic, base_color, roughness, precision=4):
+    """Return a deterministic 12-char hex ID from material properties."""
+    canonical = (
+        metallic,
+        round(base_color[0], precision),
+        round(base_color[1], precision),
+        round(base_color[2], precision),
+        round(roughness, precision),
+    )
+    digest = hashlib.md5(str(canonical).encode()).hexdigest()
+    return digest[:12]
+
+
 # ---------------------------------------------------------------------------
 # Attribute / Property Resolution
 # ---------------------------------------------------------------------------
@@ -76,11 +90,16 @@ def map_four_values_to_grid(numCells, outer_x, outer_y, inner_x, inner_y):
 _MATERIAL_PROPS = {"roughness", "metallic", "emission"}
 
 
-def resolve_source_value(mesh, poly, obj, source_name):
-    """Return a float 0-1 for the given source on this face."""
+def resolve_source_value(mesh, poly, obj, source_name, do_clamp=True):
+    """Return a float for the given source on this face.
+
+    When *do_clamp* is True the result is clamped to [0, 1].
+    """
     source_name = source_name.strip()
     if not source_name:
         return 0.0
+
+    _clamp = clamp if do_clamp else lambda v: v
 
     key = source_name.lower()
     if key in _MATERIAL_PROPS:
@@ -94,19 +113,19 @@ def resolve_source_value(mesh, poly, obj, source_name):
         if not principled:
             return 0.0
         if key == "roughness":
-            return clamp(principled.inputs["Roughness"].default_value)
+            return _clamp(principled.inputs["Roughness"].default_value)
         elif key == "metallic":
-            return clamp(principled.inputs["Metallic"].default_value)
+            return _clamp(principled.inputs["Metallic"].default_value)
         elif key == "emission":
-            return clamp(principled.inputs["Emission Strength"].default_value)
+            return _clamp(principled.inputs["Emission Strength"].default_value)
 
     attr = mesh.attributes.get(source_name)
     if attr and attr.data_type == 'FLOAT':
         if attr.domain == 'FACE':
-            return clamp(attr.data[poly.index].value)
+            return _clamp(attr.data[poly.index].value)
         elif attr.domain == 'POINT':
             verts = [mesh.loops[li].vertex_index for li in poly.loop_indices]
-            return clamp(sum(attr.data[vi].value for vi in verts) / len(verts))
+            return _clamp(sum(attr.data[vi].value for vi in verts) / len(verts))
     return 0.0
 
 
@@ -142,8 +161,8 @@ def encode_uv2(obj, props, ignore_name=""):
                 count += 1
 
         elif props.uv2_mode == 'GRID':
-            outer_x = resolve_source_value(mesh, poly, obj, props.uv2_source_u)
-            outer_y = resolve_source_value(mesh, poly, obj, props.uv2_source_v)
+            outer_x = resolve_source_value(mesh, poly, obj, props.uv2_source_u, do_clamp=False)
+            outer_y = resolve_source_value(mesh, poly, obj, props.uv2_source_v, do_clamp=False)
             inner_x = resolve_source_value(mesh, poly, obj, props.uv2_source_inner_x)
             inner_y = resolve_source_value(mesh, poly, obj, props.uv2_source_inner_y)
             grid_uv = map_four_values_to_grid(32, outer_x, outer_y, inner_x, inner_y)
@@ -158,32 +177,62 @@ def encode_uv2(obj, props, ignore_name=""):
 # Material Collection
 # ---------------------------------------------------------------------------
 
+def get_material_properties(mat):
+    """Extract (metallic_bool, [r, g, b], roughness) from a Principled BSDF.
+
+    Returns None if the material has no Principled BSDF.
+    """
+    if mat is None or not mat.use_nodes:
+        return None
+    principled = mat.node_tree.nodes.get("Principled BSDF")
+    if principled is None:
+        return None
+    bc = principled.inputs["Base Color"].default_value
+    return (
+        principled.inputs["Metallic"].default_value >= 0.5,
+        [bc[0], bc[1], bc[2]],
+        principled.inputs["Roughness"].default_value,
+    )
+
+
 def collect_materials_from_objects(objects, ignore_name=""):
     """Extract Principled BSDF properties from all materials on the given objects.
 
-    Returns dict keyed by material name:
-        {name: {"metallic": bool, "base_color": (r, g, b), "roughness": float}}
+    Returns (materials, name_to_id):
+        materials: dict keyed by property ID:
+            {id: {"metallic": bool, "base_color": [r,g,b], "roughness": float, "names": [...]}}
+        name_to_id: dict mapping material name -> property ID
     """
     materials = {}
+    name_to_id = {}
+    seen_names = set()
     for obj in objects:
         if obj.type != 'MESH' or not obj.material_slots:
             continue
         for slot in obj.material_slots:
             mat = slot.material
-            if mat is None or not mat.use_nodes or mat.name in materials:
+            if mat is None or mat.name in seen_names:
                 continue
             if mat.name == ignore_name:
                 continue
-            principled = mat.node_tree.nodes.get("Principled BSDF")
-            if principled is None:
+            props = get_material_properties(mat)
+            if props is None:
                 continue
-            bc = principled.inputs["Base Color"].default_value
-            materials[mat.name] = {
-                "metallic": principled.inputs["Metallic"].default_value >= 0.5,
-                "base_color": [bc[0], bc[1], bc[2]],
-                "roughness": principled.inputs["Roughness"].default_value,
-            }
-    return materials
+            seen_names.add(mat.name)
+            metallic, base_color, roughness = props
+            prop_id = material_property_id(metallic, base_color, roughness)
+            name_to_id[mat.name] = prop_id
+            if prop_id in materials:
+                if mat.name not in materials[prop_id]["names"]:
+                    materials[prop_id]["names"].append(mat.name)
+            else:
+                materials[prop_id] = {
+                    "metallic": metallic,
+                    "base_color": base_color,
+                    "roughness": roughness,
+                    "names": [mat.name],
+                }
+    return materials, name_to_id
 
 
 # ---------------------------------------------------------------------------
@@ -200,21 +249,29 @@ def load_existing_json(json_path):
 
 
 def merge_material_data(existing_data, new_materials):
-    """Merge new materials into existing manifest data."""
+    """Merge new materials into existing manifest data (keyed by property ID)."""
     merged = {}
     if existing_data and "materials" in existing_data:
-        for name, info in existing_data["materials"].items():
-            merged[name] = {
+        for mat_id, info in existing_data["materials"].items():
+            merged[mat_id] = {
                 "metallic": info["metallic"],
                 "base_color": info["base_color"],
                 "roughness": info["roughness"],
+                "names": list(info.get("names", [])),
             }
-    for name, info in new_materials.items():
-        merged[name] = {
-            "metallic": info["metallic"],
-            "base_color": list(info["base_color"]),
-            "roughness": info["roughness"],
-        }
+    for mat_id, info in new_materials.items():
+        if mat_id in merged:
+            existing_names = merged[mat_id]["names"]
+            for n in info.get("names", []):
+                if n not in existing_names:
+                    existing_names.append(n)
+        else:
+            merged[mat_id] = {
+                "metallic": info["metallic"],
+                "base_color": list(info["base_color"]),
+                "roughness": info["roughness"],
+                "names": list(info.get("names", [])),
+            }
     return merged
 
 
@@ -228,17 +285,17 @@ def assign_cells(materials, min_grid_size):
 
     Returns (materials_with_pos, grid_size_nm, grid_size_m).
     """
-    non_metallic = sorted([n for n, m in materials.items() if not m["metallic"]])
-    metallic = sorted([n for n, m in materials.items() if m["metallic"]])
+    non_metallic = sorted([mid for mid, m in materials.items() if not m["metallic"]])
+    metallic = sorted([mid for mid, m in materials.items() if m["metallic"]])
 
     grid_nm = calculate_grid_size(max(len(non_metallic), 1), min_grid_size)
     grid_m = calculate_grid_size(max(len(metallic), 1), min_grid_size)
 
-    for i, name in enumerate(non_metallic):
-        materials[name]["grid_pos"] = [i % grid_nm, i // grid_nm]
+    for i, mat_id in enumerate(non_metallic):
+        materials[mat_id]["grid_pos"] = [i % grid_nm, i // grid_nm]
 
-    for i, name in enumerate(metallic):
-        materials[name]["grid_pos"] = [i % grid_m, i // grid_m]
+    for i, mat_id in enumerate(metallic):
+        materials[mat_id]["grid_pos"] = [i % grid_m, i // grid_m]
 
     return materials, grid_nm, grid_m
 
@@ -323,9 +380,10 @@ def save_manifest(output_path, image_width, image_height, grid_nm, grid_m, mater
         "grid_size_metallic": grid_m,
         "materials": {},
     }
-    for name in sorted(materials.keys()):
-        info = materials[name]
-        data["materials"][name] = {
+    for mat_id in sorted(materials.keys()):
+        info = materials[mat_id]
+        data["materials"][mat_id] = {
+            "names": sorted(info.get("names", [])),
             "metallic": info["metallic"],
             "grid_pos": info.get("grid_pos", [0, 0]),
             "base_color": [round(c, 6) for c in info["base_color"]],
@@ -375,10 +433,14 @@ def remap_uvs(obj, materials_data, grid_nm, grid_m, ignore_name=""):
             continue
         if mat.name == ignore_name:
             continue
-        if mat.name not in materials_data:
+        props = get_material_properties(mat)
+        if props is None:
+            continue
+        prop_id = material_property_id(*props)
+        if prop_id not in materials_data:
             continue
 
-        info = materials_data[mat.name]
+        info = materials_data[prop_id]
         gp = info.get("grid_pos")
         if gp is None:
             continue
@@ -863,7 +925,7 @@ class MATERIALPACK_OT_generate_image(Operator):
 
         # Collect materials (excluding ignored material)
         ignore_name = props.ignore_material.name if props.ignore_material else ""
-        new_materials = collect_materials_from_objects(objects, ignore_name)
+        new_materials, _name_to_id = collect_materials_from_objects(objects, ignore_name)
         if not new_materials:
             self.report({'WARNING'}, "No Principled BSDF materials found")
             return {'CANCELLED'}

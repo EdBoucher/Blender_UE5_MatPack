@@ -6,23 +6,29 @@
   "grid_size_non_metallic": 16,
   "grid_size_metallic": 16,
   "materials": {
-    "Blue Steel": {
-      "metallic": true,
+    "1eb13cda27a3": {
+      "names": [
+        "Red Dawn"
+      ],
+      "metallic": false,
       "grid_pos": [
         0,
         0
       ],
       "base_color": [
+        0.800007,
         0.0,
-        0.434531,
-        0.800007
+        0.000859
       ],
-      "roughness": 0.1
+      "roughness": 0.349246
     },
-    "Brushed Steel": {
+    "8459a23bdbc2": {
+      "names": [
+        "Brushed Steel"
+      ],
       "metallic": true,
       "grid_pos": [
-        1,
+        0,
         0
       ],
       "base_color": [
@@ -32,33 +38,42 @@
       ],
       "roughness": 0.3
     },
-    "Concrete": {
-      "metallic": false,
+    "91113b4b2f77": {
+      "names": [
+        "Green Metal"
+      ],
+      "metallic": true,
       "grid_pos": [
-        0,
+        1,
         0
       ],
       "base_color": [
-        0.202503,
-        0.202503,
-        0.202503
+        0.00345,
+        0.800016,
+        0.0
       ],
-      "roughness": 0.9
+      "roughness": 0.188442
     },
-    "Dark Grey": {
+    "9e3f00c16a79": {
+      "names": [
+        "Pink Diffuse"
+      ],
       "metallic": false,
       "grid_pos": [
         1,
         0
       ],
       "base_color": [
-        0.026443,
-        0.026443,
-        0.026443
+        0.594461,
+        0.086702,
+        0.800007
       ],
       "roughness": 1.0
     },
-    "Glass": {
+    "a8f3f0cbd106": {
+      "names": [
+        "Glass"
+      ],
       "metallic": true,
       "grid_pos": [
         2,
@@ -71,44 +86,53 @@
       ],
       "roughness": 0.0
     },
-    "Green Metal": {
+    "b0e413338c2d": {
+      "names": [
+        "Blue Steel"
+      ],
       "metallic": true,
       "grid_pos": [
         3,
         0
       ],
       "base_color": [
-        0.00345,
-        0.800016,
-        0.0
+        0.0,
+        0.434531,
+        0.800007
       ],
-      "roughness": 0.188442
+      "roughness": 0.1
     },
-    "Pink Diffuse": {
+    "b8c165ce6558": {
+      "names": [
+        "Dark Grey"
+      ],
       "metallic": false,
       "grid_pos": [
         2,
         0
       ],
       "base_color": [
-        0.594461,
-        0.086702,
-        0.800007
+        0.026443,
+        0.026443,
+        0.026443
       ],
       "roughness": 1.0
     },
-    "Red Dawn": {
+    "d8d3acfa4b75": {
+      "names": [
+        "Concrete"
+      ],
       "metallic": false,
       "grid_pos": [
         3,
         0
       ],
       "base_color": [
-        0.800007,
-        0.0,
-        0.000859
+        0.202503,
+        0.202503,
+        0.202503
       ],
-      "roughness": 0.349246
+      "roughness": 0.9
     }
   }
 }

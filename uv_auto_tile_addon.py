@@ -1,10 +1,10 @@
 bl_info = {
     "name": "UV Auto Tile",
-    "author": "Syntify",
-    "version": (2, 1, 0),
+    "author": "Ed Boucher",
+    "version": (1, 0, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > UV Tile",
-    "description": "Automatically tile UVs across selected coplanar faces",
+    "description": "Automatically tile UVs across selected coplanar faces, as well as doing simple aspect-correct UV projection for sets of coplanar faces",
     "category": "UV",
 }
 
