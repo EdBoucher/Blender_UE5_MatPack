@@ -22,6 +22,22 @@
       ],
       "roughness": 0.349246
     },
+    "4a7df2611102": {
+      "names": [
+        "White Light"
+      ],
+      "metallic": false,
+      "grid_pos": [
+        1,
+        0
+      ],
+      "base_color": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "roughness": 0.5
+    },
     "8459a23bdbc2": {
       "names": [
         "Brushed Steel"
@@ -60,7 +76,7 @@
       ],
       "metallic": false,
       "grid_pos": [
-        1,
+        2,
         0
       ],
       "base_color": [
@@ -108,7 +124,7 @@
       ],
       "metallic": false,
       "grid_pos": [
-        2,
+        3,
         0
       ],
       "base_color": [
@@ -124,7 +140,7 @@
       ],
       "metallic": false,
       "grid_pos": [
-        3,
+        4,
         0
       ],
       "base_color": [

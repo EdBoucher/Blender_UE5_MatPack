@@ -89,17 +89,40 @@ def material_property_id(metallic, base_color, roughness, precision=4):
 
 _MATERIAL_PROPS = {"roughness", "metallic", "emission"}
 
+_RANGE_MODES = [
+    ('NONE', "None", "No transformation — raw value"),
+    ('CLAMP', "Clamp", "Clamp to [0, 1]"),
+    ('WRAP', "Wrap", "Wrap like UV coordinates"),
+    ('NORMALIZE', "Normalize", "Remap [min, max] to [0, 1]"),
+]
 
-def resolve_source_value(mesh, poly, obj, source_name, do_clamp=True):
-    """Return a float for the given source on this face.
+_RANGE_MODES_NO_NONE = [
+    ('WRAP', "Wrap", "Wrap like UV coordinates"),
+    ('CLAMP', "Clamp", "Clamp to [0, 1]"),
+    ('NORMALIZE', "Normalize", "Remap [min, max] to [0, 1]"),
+]
 
-    When *do_clamp* is True the result is clamped to [0, 1].
-    """
+
+def apply_range_mode(value, mode, min_val=None, max_val=None):
+    """Transform a value according to the selected range mode."""
+    if mode == 'CLAMP':
+        return clamp(value)
+    elif mode == 'WRAP':
+        if value < 0.0:
+            return 1.0 - (abs(value) % 1.0)
+        return value % 1.0
+    elif mode == 'NORMALIZE':
+        if min_val is None or max_val is None or max_val == min_val:
+            return 0.0
+        return (value - min_val) / (max_val - min_val)
+    return value  # NONE
+
+
+def resolve_source_value(mesh, poly, obj, source_name):
+    """Return the raw float value for the given source on this face."""
     source_name = source_name.strip()
     if not source_name:
         return 0.0
-
-    _clamp = clamp if do_clamp else lambda v: v
 
     key = source_name.lower()
     if key in _MATERIAL_PROPS:
@@ -113,25 +136,54 @@ def resolve_source_value(mesh, poly, obj, source_name, do_clamp=True):
         if not principled:
             return 0.0
         if key == "roughness":
-            return _clamp(principled.inputs["Roughness"].default_value)
+            return principled.inputs["Roughness"].default_value
         elif key == "metallic":
-            return _clamp(principled.inputs["Metallic"].default_value)
+            return principled.inputs["Metallic"].default_value
         elif key == "emission":
-            return _clamp(principled.inputs["Emission Strength"].default_value)
+            return principled.inputs["Emission Strength"].default_value
 
     attr = mesh.attributes.get(source_name)
     if attr and attr.data_type == 'FLOAT':
         if attr.domain == 'FACE':
-            return _clamp(attr.data[poly.index].value)
+            return attr.data[poly.index].value
         elif attr.domain == 'POINT':
             verts = [mesh.loops[li].vertex_index for li in poly.loop_indices]
-            return _clamp(sum(attr.data[vi].value for vi in verts) / len(verts))
+            return sum(attr.data[vi].value for vi in verts) / len(verts)
     return 0.0
 
 
 # ---------------------------------------------------------------------------
 # UV2 Encoding
 # ---------------------------------------------------------------------------
+
+def _is_ignored_poly(poly, obj, ignore_name):
+    """Return True if this polygon's material matches the ignore name."""
+    if not ignore_name:
+        return False
+    mat_idx = poly.material_index
+    if mat_idx < len(obj.material_slots):
+        mat = obj.material_slots[mat_idx].material
+        if mat and mat.name == ignore_name:
+            return True
+    return False
+
+
+def _gather_normalize_ranges(mesh, obj, ignore_name, sources_to_normalize):
+    """Pre-pass: find min/max for each source that uses NORMALIZE.
+
+    *sources_to_normalize* is a list of source name strings.
+    Returns {source_name: (min_val, max_val)}.
+    """
+    ranges = {s: (float('inf'), float('-inf')) for s in sources_to_normalize}
+    for poly in mesh.polygons:
+        if _is_ignored_poly(poly, obj, ignore_name):
+            continue
+        for src in sources_to_normalize:
+            v = resolve_source_value(mesh, poly, obj, src)
+            lo, hi = ranges[src]
+            ranges[src] = (min(lo, v), max(hi, v))
+    return ranges
+
 
 def encode_uv2(obj, props, ignore_name=""):
     """Write uv2 based on the selected encoding mode. Returns loop count."""
@@ -142,29 +194,61 @@ def encode_uv2(obj, props, ignore_name=""):
     if "uv2" not in mesh.uv_layers:
         mesh.uv_layers.new(name="uv2")
     uv2 = mesh.uv_layers["uv2"]
-    count = 0
 
+    # Build list of (source_name, range_mode) for the active mode
+    if props.uv2_mode == 'SIMPLE':
+        channels = [
+            (props.uv2_source_u, props.uv2_range_u),
+            (props.uv2_source_v, props.uv2_range_v),
+        ]
+    else:  # GRID
+        channels = [
+            (props.uv2_source_u, props.uv2_range_u),
+            (props.uv2_source_v, props.uv2_range_v),
+            (props.uv2_source_inner_x, props.uv2_range_inner_x),
+            (props.uv2_source_inner_y, props.uv2_range_inner_y),
+        ]
+
+    # Pre-pass for NORMALIZE sources
+    sources_to_normalize = list({
+        src for src, mode in channels if mode == 'NORMALIZE' and src.strip()
+    })
+    norm_ranges = {}
+    if sources_to_normalize:
+        norm_ranges = _gather_normalize_ranges(
+            mesh, obj, ignore_name, sources_to_normalize
+        )
+
+    # Write pass
+    count = 0
     for poly in mesh.polygons:
-        # Skip ignored material
-        if ignore_name:
-            mat_idx = poly.material_index
-            if mat_idx < len(obj.material_slots):
-                mat = obj.material_slots[mat_idx].material
-                if mat and mat.name == ignore_name:
-                    continue
+        if _is_ignored_poly(poly, obj, ignore_name):
+            continue
 
         if props.uv2_mode == 'SIMPLE':
-            u = resolve_source_value(mesh, poly, obj, props.uv2_source_u)
-            v = resolve_source_value(mesh, poly, obj, props.uv2_source_v)
+            raw_u = resolve_source_value(mesh, poly, obj, props.uv2_source_u)
+            raw_v = resolve_source_value(mesh, poly, obj, props.uv2_source_v)
+            u_min, u_max = norm_ranges.get(props.uv2_source_u, (None, None))
+            v_min, v_max = norm_ranges.get(props.uv2_source_v, (None, None))
+            u = apply_range_mode(raw_u, props.uv2_range_u, u_min, u_max)
+            v = apply_range_mode(raw_v, props.uv2_range_v, v_min, v_max)
             for li in poly.loop_indices:
                 uv2.data[li].uv = (u, v)
                 count += 1
 
         elif props.uv2_mode == 'GRID':
-            outer_x = resolve_source_value(mesh, poly, obj, props.uv2_source_u, do_clamp=False)
-            outer_y = resolve_source_value(mesh, poly, obj, props.uv2_source_v, do_clamp=False)
-            inner_x = resolve_source_value(mesh, poly, obj, props.uv2_source_inner_x)
-            inner_y = resolve_source_value(mesh, poly, obj, props.uv2_source_inner_y)
+            raw_ox = resolve_source_value(mesh, poly, obj, props.uv2_source_u)
+            raw_oy = resolve_source_value(mesh, poly, obj, props.uv2_source_v)
+            raw_ix = resolve_source_value(mesh, poly, obj, props.uv2_source_inner_x)
+            raw_iy = resolve_source_value(mesh, poly, obj, props.uv2_source_inner_y)
+            ox_min, ox_max = norm_ranges.get(props.uv2_source_u, (None, None))
+            oy_min, oy_max = norm_ranges.get(props.uv2_source_v, (None, None))
+            ix_min, ix_max = norm_ranges.get(props.uv2_source_inner_x, (None, None))
+            iy_min, iy_max = norm_ranges.get(props.uv2_source_inner_y, (None, None))
+            outer_x = apply_range_mode(raw_ox, props.uv2_range_u, ox_min, ox_max)
+            outer_y = apply_range_mode(raw_oy, props.uv2_range_v, oy_min, oy_max)
+            inner_x = apply_range_mode(raw_ix, props.uv2_range_inner_x, ix_min, ix_max)
+            inner_y = apply_range_mode(raw_iy, props.uv2_range_inner_y, iy_min, iy_max)
             grid_uv = map_four_values_to_grid(32, outer_x, outer_y, inner_x, inner_y)
             for li in poly.loop_indices:
                 uv2.data[li].uv = grid_uv
@@ -883,6 +967,30 @@ class MaterialPackProperties(PropertyGroup):
         description="Float attribute name or material property for inner grid Y axis",
         default="",
     )
+    uv2_range_u: EnumProperty(
+        name="U / Outer X Range",
+        description="How to handle values outside [0, 1] for U / outer X",
+        items=_RANGE_MODES,
+        default='CLAMP',
+    )
+    uv2_range_v: EnumProperty(
+        name="V / Outer Y Range",
+        description="How to handle values outside [0, 1] for V / outer Y",
+        items=_RANGE_MODES,
+        default='CLAMP',
+    )
+    uv2_range_inner_x: EnumProperty(
+        name="Inner X Range",
+        description="How to handle values outside [0, 1] for inner grid X",
+        items=_RANGE_MODES_NO_NONE,
+        default='WRAP',
+    )
+    uv2_range_inner_y: EnumProperty(
+        name="Inner Y Range",
+        description="How to handle values outside [0, 1] for inner grid Y",
+        items=_RANGE_MODES_NO_NONE,
+        default='WRAP',
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1301,19 +1409,31 @@ class MATERIALPACK_PT_uv2(Panel):
         layout.prop(props, "uv2_mode")
 
         if props.uv2_mode == 'SIMPLE':
-            layout.prop(props, "uv2_source_u", text="U Source")
-            layout.prop(props, "uv2_source_v", text="V Source")
+            row = layout.row(align=True)
+            row.prop(props, "uv2_source_u", text="U Source")
+            row.prop(props, "uv2_range_u", text="")
+            row = layout.row(align=True)
+            row.prop(props, "uv2_source_v", text="V Source")
+            row.prop(props, "uv2_range_v", text="")
             layout.label(text="Attribute name, or: roughness / metallic / emission", icon='INFO')
 
         elif props.uv2_mode == 'GRID':
             col = layout.column(align=True)
             col.label(text="Outer Grid (texture R, G)")
-            col.prop(props, "uv2_source_u", text="X Axis")
-            col.prop(props, "uv2_source_v", text="Y Axis")
+            row = col.row(align=True)
+            row.prop(props, "uv2_source_u", text="X Axis")
+            row.prop(props, "uv2_range_u", text="")
+            row = col.row(align=True)
+            row.prop(props, "uv2_source_v", text="Y Axis")
+            row.prop(props, "uv2_range_v", text="")
             col.separator()
             col.label(text="Inner Grid (texture B, A)")
-            col.prop(props, "uv2_source_inner_x", text="X Axis")
-            col.prop(props, "uv2_source_inner_y", text="Y Axis")
+            row = col.row(align=True)
+            row.prop(props, "uv2_source_inner_x", text="X Axis")
+            row.prop(props, "uv2_range_inner_x", text="")
+            row = col.row(align=True)
+            row.prop(props, "uv2_source_inner_y", text="Y Axis")
+            row.prop(props, "uv2_range_inner_y", text="")
             layout.label(text="Attribute name, or: roughness / metallic / emission", icon='INFO')
 
 
