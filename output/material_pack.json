@@ -3,8 +3,7 @@
     512,
     512
   ],
-  "grid_size_non_metallic": 16,
-  "grid_size_metallic": 16,
+  "cell_size": 16,
   "materials": {
     "1eb13cda27a3": {
       "names": [
@@ -21,6 +20,22 @@
         0.000859
       ],
       "roughness": 0.349246
+    },
+    "321f80e87b56": {
+      "names": [
+        "Stainless Steel"
+      ],
+      "metallic": true,
+      "grid_pos": [
+        4,
+        0
+      ],
+      "base_color": [
+        0.405097,
+        0.365983,
+        0.316225
+      ],
+      "roughness": 0.0
     },
     "4a7df2611102": {
       "names": [

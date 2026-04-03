@@ -32,20 +32,6 @@ def clamp(value, lo=0.0, hi=1.0):
     return max(lo, min(hi, value))
 
 
-def next_power_of_two(n):
-    """Return the smallest power of two >= n (minimum 1)."""
-    if n <= 1:
-        return 1
-    return 1 << (n - 1).bit_length()
-
-
-def calculate_grid_size(material_count, min_grid_size):
-    """Smallest power-of-two k >= min_grid_size where k*k >= material_count."""
-    k = max(next_power_of_two(min_grid_size), 1)
-    while k * k < material_count:
-        k *= 2
-    return k
-
 
 def linearToArrayIndex(value, numElements):
     """Quantize a 0-1 float to an integer grid index."""
@@ -403,16 +389,23 @@ def load_existing_json(json_path):
 
 
 def merge_material_data(existing_data, new_materials):
-    """Merge new materials into existing manifest data (keyed by property ID)."""
+    """Merge new materials into existing manifest data (keyed by property ID).
+
+    Preserves grid_pos from existing entries so that previously assigned
+    materials keep their atlas position.
+    """
     merged = {}
     if existing_data and "materials" in existing_data:
         for mat_id, info in existing_data["materials"].items():
-            merged[mat_id] = {
+            entry = {
                 "metallic": info["metallic"],
                 "base_color": info["base_color"],
                 "roughness": info["roughness"],
                 "names": list(info.get("names", [])),
             }
+            if "grid_pos" in info:
+                entry["grid_pos"] = list(info["grid_pos"])
+            merged[mat_id] = entry
     for mat_id, info in new_materials.items():
         if mat_id in merged:
             existing_names = merged[mat_id]["names"]
@@ -433,32 +426,58 @@ def merge_material_data(existing_data, new_materials):
 # Cell Assignment
 # ---------------------------------------------------------------------------
 
-def assign_cells(materials, min_grid_size):
-    """Separate materials into metallic/non-metallic, calculate grid sizes,
-    assign grid positions.
+def assign_cells(materials, grid_cols, grid_rows):
+    """Separate materials into metallic/non-metallic, assign grid positions.
 
-    Returns (materials_with_pos, grid_size_nm, grid_size_m).
+    Materials that already have a grid_pos (from a previous manifest) keep it.
+    New materials are assigned to the first available cell.
+
+    Returns materials dict (modified in place).
     """
-    non_metallic = sorted([mid for mid, m in materials.items() if not m["metallic"]])
-    metallic = sorted([mid for mid, m in materials.items() if m["metallic"]])
+    non_metallic = [mid for mid, m in materials.items() if not m["metallic"]]
+    metallic = [mid for mid, m in materials.items() if m["metallic"]]
 
-    grid_nm = calculate_grid_size(max(len(non_metallic), 1), min_grid_size)
-    grid_m = calculate_grid_size(max(len(metallic), 1), min_grid_size)
+    _assign_stable(materials, non_metallic, grid_cols, grid_rows)
+    _assign_stable(materials, metallic, grid_cols, grid_rows)
 
-    for i, mat_id in enumerate(non_metallic):
-        materials[mat_id]["grid_pos"] = [i % grid_nm, i // grid_nm]
+    return materials
 
-    for i, mat_id in enumerate(metallic):
-        materials[mat_id]["grid_pos"] = [i % grid_m, i // grid_m]
 
-    return materials, grid_nm, grid_m
+def _assign_stable(materials, mat_ids, grid_cols, grid_rows):
+    """Assign grid positions to materials, preserving existing positions.
+
+    Occupied cells are collected first, then new materials fill the first
+    available cells in row-major order.
+    """
+    occupied = set()
+    needs_pos = []
+
+    for mid in mat_ids:
+        gp = materials[mid].get("grid_pos")
+        if gp is not None:
+            occupied.add((gp[0], gp[1]))
+        else:
+            needs_pos.append(mid)
+
+    if not needs_pos:
+        return
+
+    # Iterate cells in row-major order, assign to unoccupied slots
+    idx = 0
+    for row in range(grid_rows):
+        for col in range(grid_cols):
+            if idx >= len(needs_pos):
+                return
+            if (col, row) not in occupied:
+                materials[needs_pos[idx]]["grid_pos"] = [col, row]
+                idx += 1
 
 
 # ---------------------------------------------------------------------------
 # Image Generation
 # ---------------------------------------------------------------------------
 
-def generate_image(materials, image_width, image_height, grid_nm, grid_m):
+def generate_image(materials, image_width, image_height, cell_size):
     """Create a Blender image with material cells packed into a grid.
 
     Left half = non-metallic, right half = metallic.
@@ -476,10 +495,6 @@ def generate_image(materials, image_width, image_height, grid_nm, grid_m):
     pixels = [0.0, 0.0, 0.0, 0.0] * pixel_count
 
     half_w = image_width // 2
-    cell_w_nm = half_w // grid_nm
-    cell_h_nm = image_height // grid_nm
-    cell_w_m = half_w // grid_m
-    cell_h_m = image_height // grid_m
 
     for name, info in materials.items():
         gp = info.get("grid_pos")
@@ -490,16 +505,13 @@ def generate_image(materials, image_width, image_height, grid_nm, grid_m):
         a = max(info["roughness"], 0.01)
 
         if not info["metallic"]:
-            x_start = col * cell_w_nm
-            y_start = row * cell_h_nm
-            cw, ch = cell_w_nm, cell_h_nm
+            x_start = col * cell_size
         else:
-            x_start = half_w + col * cell_w_m
-            y_start = row * cell_h_m
-            cw, ch = cell_w_m, cell_h_m
+            x_start = half_w + col * cell_size
+        y_start = row * cell_size
 
-        for py in range(y_start, y_start + ch):
-            for px in range(x_start, x_start + cw):
+        for py in range(y_start, y_start + cell_size):
+            for px in range(x_start, x_start + cell_size):
                 idx = (py * image_width + px) * 4
                 pixels[idx] = r
                 pixels[idx + 1] = g
@@ -572,15 +584,14 @@ def generate_encoding_grid(num_cells):
 # JSON Output
 # ---------------------------------------------------------------------------
 
-def save_manifest(output_path, image_width, image_height, grid_nm, grid_m, materials):
+def save_manifest(output_path, image_width, image_height, cell_size, materials):
     """Write the material-pack JSON manifest alongside the image."""
     base, _ = os.path.splitext(bpy.path.abspath(output_path))
     json_path = base + ".json"
 
     data = {
         "image_size": [image_width, image_height],
-        "grid_size_non_metallic": grid_nm,
-        "grid_size_metallic": grid_m,
+        "cell_size": cell_size,
         "materials": {},
     }
     for mat_id in sorted(materials.keys()):
@@ -603,7 +614,7 @@ def save_manifest(output_path, image_width, image_height, grid_nm, grid_m, mater
 # UV Remapping
 # ---------------------------------------------------------------------------
 
-def remap_uvs(obj, materials_data, grid_nm, grid_m, ignore_name=""):
+def remap_uvs(obj, materials_data, image_width, image_height, cell_size, ignore_name=""):
     """Set uv1 on each face to point at the center of its material's cell.
 
     Faces with the ignore material are skipped.
@@ -613,6 +624,7 @@ def remap_uvs(obj, materials_data, grid_nm, grid_m, ignore_name=""):
         return 0
 
     mesh = obj.data
+    half_w = image_width // 2
 
     # Ensure uv0 exists
     if "UVMap" in mesh.uv_layers:
@@ -650,11 +662,10 @@ def remap_uvs(obj, materials_data, grid_nm, grid_m, ignore_name=""):
 
         col, row = gp
         if not info["metallic"]:
-            u = (col + 0.5) / grid_nm * 0.5
-            v = (row + 0.5) / grid_nm
+            u = (col + 0.5) * cell_size / image_width
         else:
-            u = 0.5 + (col + 0.5) / grid_m * 0.5
-            v = (row + 0.5) / grid_m
+            u = (half_w + (col + 0.5) * cell_size) / image_width
+        v = (row + 0.5) * cell_size / image_height
 
         for loop_index in poly.loop_indices:
             uv1.data[loop_index].uv = (u, v)
@@ -854,7 +865,7 @@ def _reassign_materials(obj, ignore_mat, target_mat):
             poly.material_index = 0
 
 
-def process_single_object(context, props, source, materials_data, grid_nm, grid_m):
+def process_single_object(context, props, source, materials_data, image_width, image_height, cell_size):
     """Duplicate source, apply cleanup, remap UVs, manage materials.
 
     Returns (duplicate, face_loop_count) or (None, 0).
@@ -910,7 +921,7 @@ def process_single_object(context, props, source, materials_data, grid_nm, grid_
     _run_cleanup(context, duplicate, props)
 
     # Remap UVs (must happen while materials still exist)
-    face_loops = remap_uvs(duplicate, materials_data, grid_nm, grid_m, ignore_name)
+    face_loops = remap_uvs(duplicate, materials_data, image_width, image_height, cell_size, ignore_name)
 
     # Encode uv2 (attribute encoding)
     encode_uv2(duplicate, props, ignore_name)
@@ -948,12 +959,16 @@ class MaterialPackProperties(PropertyGroup):
         min=64,
         max=4096,
     )
-    min_grid_size: IntProperty(
-        name="Min Grid Size",
-        description="Minimum grid subdivisions per half (will round up to power of two)",
-        default=2,
-        min=1,
-        max=64,
+    cell_size: EnumProperty(
+        name="Grid Cell Size",
+        description="Pixel dimensions of each square cell in the atlas",
+        items=[
+            ('8', "8", "8x8 pixel cells"),
+            ('16', "16", "16x16 pixel cells"),
+            ('32', "32", "32x32 pixel cells"),
+            ('64', "64", "64x64 pixel cells"),
+        ],
+        default='16',
     )
 
     # Paths
@@ -1244,27 +1259,31 @@ class MATERIALPACK_OT_generate_image(Operator):
         materials = merge_material_data(existing_data, new_materials)
 
         # Assign cells
-        materials, grid_nm, grid_m = assign_cells(materials, props.min_grid_size)
+        cs = int(props.cell_size)
+        grid_cols = (props.image_width // 2) // cs
+        grid_rows = props.image_height // cs
+        materials = assign_cells(materials, grid_cols, grid_rows)
 
         # Generate image
         image = generate_image(
-            materials, props.image_width, props.image_height, grid_nm, grid_m
+            materials, props.image_width, props.image_height, cs
         )
         save_image(image, props.output_path)
 
         # Save JSON
         json_out = save_manifest(
             props.output_path, props.image_width, props.image_height,
-            grid_nm, grid_m, materials,
+            cs, materials,
         )
 
         # Auto-populate Load JSON with the newly created manifest
         props.json_path = json_out
 
+        per_half = grid_cols * grid_rows
         self.report(
             {'INFO'},
-            f"Material Pack: {len(materials)} materials → "
-            f"{grid_nm}x{grid_nm} / {grid_m}x{grid_m} grid. "
+            f"Material Pack: {len(materials)} materials, "
+            f"{cs}px cells ({per_half} per half). "
             f"Saved to {bpy.path.abspath(props.output_path)}",
         )
         return {'FINISHED'}
@@ -1317,8 +1336,8 @@ class MATERIALPACK_OT_process_object(Operator):
             return {'CANCELLED'}
 
         materials_data = manifest["materials"]
-        grid_nm = manifest["grid_size_non_metallic"]
-        grid_m = manifest["grid_size_metallic"]
+        manifest_image_size = manifest["image_size"]
+        manifest_cell_size = manifest["cell_size"]
 
         source = context.active_object
         if not source.material_slots:
@@ -1337,7 +1356,8 @@ class MATERIALPACK_OT_process_object(Operator):
                     return {'CANCELLED'}
 
         duplicate, face_loops = process_single_object(
-            context, props, source, materials_data, grid_nm, grid_m
+            context, props, source, materials_data,
+            manifest_image_size[0], manifest_image_size[1], manifest_cell_size
         )
         if duplicate is None:
             self.report({'WARNING'}, "Processing failed")
@@ -1383,8 +1403,8 @@ class MATERIALPACK_OT_process_collection(Operator):
             return {'CANCELLED'}
 
         materials_data = manifest["materials"]
-        grid_nm = manifest["grid_size_non_metallic"]
-        grid_m = manifest["grid_size_metallic"]
+        manifest_image_size = manifest["image_size"]
+        manifest_cell_size = manifest["cell_size"]
 
         col_name = props.input_collection.strip()
         if not col_name or col_name not in bpy.data.collections:
@@ -1413,7 +1433,8 @@ class MATERIALPACK_OT_process_collection(Operator):
 
         for source in mesh_objects:
             duplicate, face_loops = process_single_object(
-                context, props, source, materials_data, grid_nm, grid_m
+                context, props, source, materials_data,
+                manifest_image_size[0], manifest_image_size[1], manifest_cell_size
             )
             if duplicate is not None:
                 duplicates.append(duplicate)
@@ -1543,9 +1564,12 @@ class MATERIALPACK_PT_image(Panel):
 
         layout.prop(props, "image_width")
         layout.prop(props, "image_height")
-        layout.prop(props, "min_grid_size")
-        grid_k = calculate_grid_size(1, props.min_grid_size)
-        per_half = grid_k * grid_k
+        layout.prop(props, "cell_size")
+        cs = int(props.cell_size)
+        half_w = props.image_width // 2
+        cols = half_w // cs
+        rows = props.image_height // cs
+        per_half = cols * rows
         layout.separator(type="LINE")
         layout.label(text=f" {per_half * 2} materials ({per_half} metallic)")
 
