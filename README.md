@@ -2,6 +2,32 @@
 
 MatPack reduces the number of materials you need to sync between Unreal and Blender by creating a material atlas. This is like a texture atlas, but for BSDF properties. There's a blog post about the motivation and approach here - https://jeanpaulsoftware.com/2026/03/29/blender-material-packing/ - but in short / TLDR: this is good because you only need one actual UE5 material to render a lot of different surface types.
 
+## Installation
+
+In Blender, go to Edit -> Preferences -> Plugins, then click the small arrow in the top right and select 'Install from Disk', and select the plugin you want to install. 
+
+There's three plugins:
+
+- `material_pack_addon.py` - this is the main plugin file
+- `attribute_paint_addon.py` - this is a convenience tool to make it easier 
+- `uv_auto_tile_addon.py` - allows you to repeat a pattern a number of times over a face or faces. Isn't actually related but it's in the repo now so whatever
+
+## Demos
+
+There's a Blender file with an example Geometry Nodes setup...
+
+![Some Geometry Nodes](/readme-images/blender-demo.png)
+
+... and an Unreal project with some PCG graphs and materials that should give you some idea of what this can be used for.
+
+![Everything apart from the sky is using a single material](/readme-images/ue5-demo.jpg)
+
+Everything apart from the sky in that image is using a single UE5 material, which is using the models and material atlas created by this plugin.
+
+## Docs / How it Works
+
+I will be writing proper documentation at some point- and [the blog post mentioned](https://jeanpaulsoftware.com/2026/03/29/blender-material-packing/) is really worth reading if you want more information - but here's the general idea. 
+
 There are two parts the the process: 
 
 1. Atlas generation: you give the plugin a model or collection, it reads the materials on the models, extracts the properties, matches them to those in a JSON file, and then produces a texture. 
@@ -30,22 +56,10 @@ For example: say you wanted to render a bunch of objects that had different colo
 
 Writing to vertex colours is also supported, just in case you want to use those.
 
-You can write attributes either using Geometry Nodes (which is the intended usage), but there's a second plugin- Attribute Paint - that makes it a lot easier to just manually select the bits of the mesh you want an attribute on and set a value.
+Geometry Nodes is usually the best way to write attributes, but there's a second plugin included- Attribute Paint - that makes it a lot easier to just manually select the bits of the mesh you want an attribute on and set it to a particular value.
 
 ![Just set the value you want and click 'apply' to have it on your selection; set random values for the selection; or write the face index to use as a seed](/readme-images/attribute-paint.png)
 
-## Installation
+## Contributing
 
-In Blender, go to edit -> preferences -> plugins, then click the small arrow in the top right and select 'Install from Disk', and select the plugin you want to install. 
-
-There's three plugins:
-
-- `material_pack_addon.py` - this is the main plugin file
-- `attribute_paint_addon.py` - this is a convenience tool to make it easier 
-- `uv_auto_tile_addon.py` - allows you to repeat a pattern a number of times over a face or faces. Isn't actually related but it's in the repo now so whatever
-
-## Demos
-
-There's a Blender file with an example Geometry Nodes setup, and an Unreal Engine 5 project with a couple of PCG graphs and Unreal materials that should give you some idea how to use this. I will be writing proper documentation at some point.
-
-*if you can think of a better name then I'm all ears
+Feel free, just make sure you spell 'colour' with a 'u'. Also if you can think of a better name than 'MatPack' then I'm all ears.
