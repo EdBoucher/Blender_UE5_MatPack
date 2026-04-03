@@ -75,3 +75,7 @@ DerivedDataCache/*
 
 # Blender back-ups
 MatPack_Demo.blend1
+
+# Claude rubbish
+.claude/*
+.claude/**/*
