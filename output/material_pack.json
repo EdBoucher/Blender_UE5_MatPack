@@ -19,7 +19,13 @@
         0.0,
         0.000859
       ],
-      "roughness": 0.349246
+      "roughness": 0.349246,
+      "emission_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "emission_strength": 0.0
     },
     "321f80e87b56": {
       "names": [
@@ -35,7 +41,35 @@
         0.365983,
         0.316225
       ],
-      "roughness": 0.0
+      "roughness": 0.0,
+      "emission_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "emission_strength": 0.0
+    },
+    "3cdcdcadbf01": {
+      "names": [
+        "Green Metal"
+      ],
+      "metallic": true,
+      "grid_pos": [
+        5,
+        0
+      ],
+      "base_color": [
+        0.00345,
+        0.800016,
+        0.0
+      ],
+      "roughness": 0.188442,
+      "emission_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "emission_strength": 0.0
     },
     "4a7df2611102": {
       "names": [
@@ -51,7 +85,13 @@
         0.8,
         0.8
       ],
-      "roughness": 0.5
+      "roughness": 0.5,
+      "emission_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "emission_strength": 2.0
     },
     "8459a23bdbc2": {
       "names": [
@@ -67,7 +107,13 @@
         0.365983,
         0.316225
       ],
-      "roughness": 0.3
+      "roughness": 0.3,
+      "emission_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "emission_strength": 0.0
     },
     "91113b4b2f77": {
       "names": [
@@ -83,7 +129,13 @@
         0.800016,
         0.0
       ],
-      "roughness": 0.188442
+      "roughness": 0.188442,
+      "emission_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "emission_strength": 0.0
     },
     "9e3f00c16a79": {
       "names": [
@@ -99,7 +151,13 @@
         0.086702,
         0.800007
       ],
-      "roughness": 1.0
+      "roughness": 1.0,
+      "emission_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "emission_strength": 0.0
     },
     "a8f3f0cbd106": {
       "names": [
@@ -115,7 +173,13 @@
         0.8,
         0.8
       ],
-      "roughness": 0.0
+      "roughness": 0.0,
+      "emission_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "emission_strength": 0.0
     },
     "b0e413338c2d": {
       "names": [
@@ -131,7 +195,13 @@
         0.434531,
         0.800007
       ],
-      "roughness": 0.1
+      "roughness": 0.1,
+      "emission_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "emission_strength": 0.0
     },
     "b8c165ce6558": {
       "names": [
@@ -147,7 +217,13 @@
         0.026443,
         0.026443
       ],
-      "roughness": 1.0
+      "roughness": 1.0,
+      "emission_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "emission_strength": 0.0
     },
     "d8d3acfa4b75": {
       "names": [
@@ -163,7 +239,13 @@
         0.202503,
         0.202503
       ],
-      "roughness": 0.9
+      "roughness": 0.9,
+      "emission_color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "emission_strength": 0.0
     }
   }
 }

@@ -318,9 +318,11 @@ def encode_vertex_colors(obj, props, ignore_name=""):
 # ---------------------------------------------------------------------------
 
 def get_material_properties(mat):
-    """Extract (metallic_bool, [r, g, b], roughness) from a Principled BSDF.
+    """Extract material properties from a Principled BSDF.
 
     Returns None if the material has no Principled BSDF.
+    Otherwise returns (metallic_bool, [r, g, b], roughness,
+                       [er, eg, eb], emission_strength).
     """
     if mat is None or not mat.use_nodes:
         return None
@@ -328,10 +330,13 @@ def get_material_properties(mat):
     if principled is None:
         return None
     bc = principled.inputs["Base Color"].default_value
+    ec = principled.inputs["Emission Color"].default_value
     return (
         principled.inputs["Metallic"].default_value >= 0.5,
         [bc[0], bc[1], bc[2]],
         principled.inputs["Roughness"].default_value,
+        [ec[0], ec[1], ec[2]],
+        principled.inputs["Emission Strength"].default_value,
     )
 
 
@@ -359,7 +364,7 @@ def collect_materials_from_objects(objects, ignore_name=""):
             if props is None:
                 continue
             seen_names.add(mat.name)
-            metallic, base_color, roughness = props
+            metallic, base_color, roughness, emission_color, emission_strength = props
             prop_id = material_property_id(metallic, base_color, roughness)
             name_to_id[mat.name] = prop_id
             if prop_id in materials:
@@ -370,6 +375,8 @@ def collect_materials_from_objects(objects, ignore_name=""):
                     "metallic": metallic,
                     "base_color": base_color,
                     "roughness": roughness,
+                    "emission_color": emission_color,
+                    "emission_strength": emission_strength,
                     "names": [mat.name],
                 }
     return materials, name_to_id
@@ -401,6 +408,8 @@ def merge_material_data(existing_data, new_materials):
                 "metallic": info["metallic"],
                 "base_color": info["base_color"],
                 "roughness": info["roughness"],
+                "emission_color": info.get("emission_color", [1.0, 1.0, 1.0]),
+                "emission_strength": info.get("emission_strength", 0.0),
                 "names": list(info.get("names", [])),
             }
             if "grid_pos" in info:
@@ -412,11 +421,18 @@ def merge_material_data(existing_data, new_materials):
             for n in info.get("names", []):
                 if n not in existing_names:
                     existing_names.append(n)
+            # Update emission from live data if it was missing in the JSON
+            if "emission_color" in info:
+                merged[mat_id]["emission_color"] = list(info["emission_color"])
+            if "emission_strength" in info:
+                merged[mat_id]["emission_strength"] = info["emission_strength"]
         else:
             merged[mat_id] = {
                 "metallic": info["metallic"],
                 "base_color": list(info["base_color"]),
                 "roughness": info["roughness"],
+                "emission_color": list(info.get("emission_color", [1.0, 1.0, 1.0])),
+                "emission_strength": info.get("emission_strength", 0.0),
                 "names": list(info.get("names", [])),
             }
     return merged
@@ -602,6 +618,8 @@ def save_manifest(output_path, image_width, image_height, cell_size, materials):
             "grid_pos": info.get("grid_pos", [0, 0]),
             "base_color": [round(c, 6) for c in info["base_color"]],
             "roughness": round(info["roughness"], 6),
+            "emission_color": [round(c, 6) for c in info.get("emission_color", [1.0, 1.0, 1.0])],
+            "emission_strength": round(info.get("emission_strength", 0.0), 6),
         }
 
     with open(json_path, "w", encoding="utf-8") as f:
@@ -651,7 +669,7 @@ def remap_uvs(obj, materials_data, image_width, image_height, cell_size, ignore_
         props = get_material_properties(mat)
         if props is None:
             continue
-        prop_id = material_property_id(*props)
+        prop_id = material_property_id(props[0], props[1], props[2])
         if prop_id not in materials_data:
             continue
 
@@ -983,6 +1001,11 @@ class MaterialPackProperties(PropertyGroup):
         description="Path to an existing manifest JSON to merge with (additive mode). Leave empty to start fresh",
         subtype='FILE_PATH',
         default="",
+    )
+    import_overwrite: BoolProperty(
+        name="Overwrite Existing",
+        description="Overwrite existing Blender materials with the same name when importing from JSON",
+        default=False,
     )
 
     # Processing
@@ -1316,6 +1339,78 @@ class MATERIALPACK_OT_generate_encoding_grid(Operator):
         return {'FINISHED'}
 
 
+class MATERIALPACK_OT_import_materials(Operator):
+    bl_idname = "materialpack.import_materials"
+    bl_label = "Import Materials"
+    bl_description = "Create Blender materials from the material pack JSON manifest"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        props = context.scene.material_pack
+
+        # Determine which JSON to load: prefer json_path, fall back to output_path
+        json_path = props.json_path.strip()
+        if not json_path:
+            base, _ = os.path.splitext(bpy.path.abspath(props.output_path))
+            json_path = base + ".json"
+        else:
+            json_path = bpy.path.abspath(json_path)
+
+        if not os.path.isfile(json_path):
+            self.report({'ERROR'}, f"JSON not found: {json_path}")
+            return {'CANCELLED'}
+
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        materials = data.get("materials", {})
+        if not materials:
+            self.report({'WARNING'}, "No materials in JSON")
+            return {'CANCELLED'}
+
+        created = 0
+        skipped = 0
+        overwritten = 0
+
+        for mat_id, info in materials.items():
+            names = info.get("names", [mat_id])
+            for name in names:
+                existing = bpy.data.materials.get(name)
+                if existing and props.import_overwrite:
+                    mat = existing
+                    if not mat.use_nodes:
+                        mat.use_nodes = True
+                    overwritten += 1
+                elif existing:
+                    skipped += 1
+                    continue
+                else:
+                    mat = bpy.data.materials.new(name=name)
+                    mat.use_nodes = True
+                    created += 1
+
+                principled = mat.node_tree.nodes.get("Principled BSDF")
+                if principled is None:
+                    principled = mat.node_tree.nodes.new("ShaderNodeBsdfPrincipled")
+
+                bc = info.get("base_color", [0.8, 0.8, 0.8])
+                principled.inputs["Base Color"].default_value = (bc[0], bc[1], bc[2], 1.0)
+                principled.inputs["Roughness"].default_value = info.get("roughness", 0.5)
+                principled.inputs["Metallic"].default_value = 1.0 if info.get("metallic", False) else 0.0
+
+                ec = info.get("emission_color", [1.0, 1.0, 1.0])
+                principled.inputs["Emission Color"].default_value = (ec[0], ec[1], ec[2], 1.0)
+                principled.inputs["Emission Strength"].default_value = info.get("emission_strength", 0.0)
+
+        parts = [f"{created} created"]
+        if skipped:
+            parts.append(f"{skipped} skipped")
+        if overwritten:
+            parts.append(f"{overwritten} overwritten")
+        self.report({'INFO'}, f"Import materials: {', '.join(parts)}")
+        return {'FINISHED'}
+
+
 class MATERIALPACK_OT_process_object(Operator):
     bl_idname = "materialpack.process_object"
     bl_label = "Process Object"
@@ -1598,6 +1693,10 @@ class MATERIALPACK_PT_texgen(Panel):
 
         layout.operator("materialpack.generate_image", icon='IMAGE_DATA')
 
+        layout.separator()
+        layout.prop(props, "import_overwrite")
+        layout.operator("materialpack.import_materials", icon='IMPORT')
+
 
 class MATERIALPACK_PT_encoding_grid_settings(Panel):
     bl_label = "Encoding Grid Settings"
@@ -1780,6 +1879,7 @@ classes = (
     MaterialPackProperties,
     MATERIALPACK_OT_generate_image,
     MATERIALPACK_OT_generate_encoding_grid,
+    MATERIALPACK_OT_import_materials,
     MATERIALPACK_OT_process_object,
     MATERIALPACK_OT_process_collection,
     MATERIALPACK_PT_main,
