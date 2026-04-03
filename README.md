@@ -9,7 +9,7 @@ In Blender, go to Edit -> Preferences -> Plugins, then click the small arrow in 
 There's three plugins:
 
 - `material_pack_addon.py` - this is the main plugin file
-- `attribute_paint_addon.py` - this is a convenience tool to make it easier 
+- `attribute_paint_addon.py` - this is a convenience tool to make it easier to set attributes on parts of a mesh, since Blender's native way of doing that is pretty painful.
 - `uv_auto_tile_addon.py` - allows you to repeat a pattern a number of times over a face or faces. Isn't actually related but it's in the repo now so whatever
 
 ## Demos
