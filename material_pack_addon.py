@@ -923,6 +923,8 @@ def process_single_object(context, props, source, materials_data, image_width, i
             active_object=duplicate, object=duplicate, selected_objects=[duplicate]
         ):
             for mod in list(duplicate.modifiers):
+                if props.skip_armature_modifiers and mod.type == 'ARMATURE':
+                    continue
                 try:
                     bpy.ops.object.modifier_apply(modifier=mod.name)
                 except RuntimeError:
@@ -1032,6 +1034,11 @@ class MaterialPackProperties(PropertyGroup):
     apply_modifiers: BoolProperty(
         name="Apply Modifiers",
         description="Apply all modifiers on the duplicate",
+        default=True,
+    )
+    skip_armature_modifiers: BoolProperty(
+        name="Skip Armature Modifiers",
+        description="When applying modifiers, leave Armature modifiers unapplied (recommended for skeletal meshes)",
         default=True,
     )
     apply_transform: BoolProperty(
@@ -1747,6 +1754,9 @@ class MATERIALPACK_PT_processing(Panel):
         layout.prop(props, "overwrite_existing")
         layout.prop(props, "ignore_hidden")
         layout.prop(props, "apply_modifiers")
+        row = layout.row()
+        row.enabled = props.apply_modifiers
+        row.prop(props, "skip_armature_modifiers")
         layout.prop(props, "apply_transform")
         layout.prop(props, "delete_materials")
         layout.prop(props, "ignore_material")
