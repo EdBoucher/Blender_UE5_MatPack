@@ -79,14 +79,20 @@ _RANGE_MODES = [
     ('NONE', "None", "No transformation — raw value"),
     ('CLAMP', "Clamp", "Clamp to [0, 1]"),
     ('WRAP', "Wrap", "Wrap like UV coordinates"),
-    ('NORMALIZE', "Normalize", "Remap [min, max] to [0, 1]"),
+    ('NORMALIZE', "Normalize", "Remap [min, max] to [0, 1] (auto-detected from mesh)"),
+    ('MAP_TO_RANGE', "Map to Range", "Remap user-specified [min, max] to [0, 1], clamp result"),
+    ('MAP_TO_RANGE_UNCLAMPED', "Map to Range Unclamped", "Remap user-specified [min, max] to [0, 1], no clamping"),
 ]
 
 _RANGE_MODES_NO_NONE = [
     ('WRAP', "Wrap", "Wrap like UV coordinates"),
     ('CLAMP', "Clamp", "Clamp to [0, 1]"),
-    ('NORMALIZE', "Normalize", "Remap [min, max] to [0, 1]"),
+    ('NORMALIZE', "Normalize", "Remap [min, max] to [0, 1] (auto-detected from mesh)"),
+    ('MAP_TO_RANGE', "Map to Range", "Remap user-specified [min, max] to [0, 1], clamp result"),
+    ('MAP_TO_RANGE_UNCLAMPED', "Map to Range Unclamped", "Remap user-specified [min, max] to [0, 1], no clamping"),
 ]
+
+_MAP_TO_RANGE_MODES = {'MAP_TO_RANGE', 'MAP_TO_RANGE_UNCLAMPED'}
 
 
 def apply_range_mode(value, mode, min_val=None, max_val=None):
@@ -98,6 +104,14 @@ def apply_range_mode(value, mode, min_val=None, max_val=None):
             return 1.0 - (abs(value) % 1.0)
         return value % 1.0
     elif mode == 'NORMALIZE':
+        if min_val is None or max_val is None or max_val == min_val:
+            return 0.0
+        return (value - min_val) / (max_val - min_val)
+    elif mode == 'MAP_TO_RANGE':
+        if min_val is None or max_val is None or max_val == min_val:
+            return 0.0
+        return clamp((value - min_val) / (max_val - min_val))
+    elif mode == 'MAP_TO_RANGE_UNCLAMPED':
         if min_val is None or max_val is None or max_val == min_val:
             return 0.0
         return (value - min_val) / (max_val - min_val)
@@ -181,29 +195,34 @@ def encode_uv2(obj, props, ignore_name=""):
         mesh.uv_layers.new(name="uv2")
     uv2 = mesh.uv_layers["uv2"]
 
-    # Build list of (source_name, range_mode) for the active mode
+    # Build list of (source_name, range_mode, user_min, user_max) for the active mode
     if props.uv2_mode == 'SIMPLE':
         channels = [
-            (props.uv2_source_u, props.uv2_range_u),
-            (props.uv2_source_v, props.uv2_range_v),
+            (props.uv2_source_u, props.uv2_range_u, props.uv2_map_min_u, props.uv2_map_max_u),
+            (props.uv2_source_v, props.uv2_range_v, props.uv2_map_min_v, props.uv2_map_max_v),
         ]
     else:  # GRID
         channels = [
-            (props.uv2_source_u, props.uv2_range_u),
-            (props.uv2_source_v, props.uv2_range_v),
-            (props.uv2_source_inner_x, props.uv2_range_inner_x),
-            (props.uv2_source_inner_y, props.uv2_range_inner_y),
+            (props.uv2_source_u,       props.uv2_range_u,       props.uv2_map_min_u,       props.uv2_map_max_u),
+            (props.uv2_source_v,       props.uv2_range_v,       props.uv2_map_min_v,       props.uv2_map_max_v),
+            (props.uv2_source_inner_x, props.uv2_range_inner_x, props.uv2_map_min_inner_x, props.uv2_map_max_inner_x),
+            (props.uv2_source_inner_y, props.uv2_range_inner_y, props.uv2_map_min_inner_y, props.uv2_map_max_inner_y),
         ]
 
-    # Pre-pass for NORMALIZE sources
+    # Pre-pass for NORMALIZE sources (MAP_TO_RANGE uses user-specified bounds, no pre-pass needed)
     sources_to_normalize = list({
-        src for src, mode in channels if mode == 'NORMALIZE' and src.strip()
+        src for src, mode, _, _ in channels if mode == 'NORMALIZE' and src.strip()
     })
     norm_ranges = {}
     if sources_to_normalize:
         norm_ranges = _gather_normalize_ranges(
             mesh, obj, ignore_name, sources_to_normalize
         )
+
+    def _resolve_bounds(src, mode, user_min, user_max):
+        if mode == 'NORMALIZE':
+            return norm_ranges.get(src, (None, None))
+        return (user_min, user_max)
 
     # Write pass
     count = 0
@@ -212,29 +231,23 @@ def encode_uv2(obj, props, ignore_name=""):
             continue
 
         if props.uv2_mode == 'SIMPLE':
-            raw_u = resolve_source_value(mesh, poly, obj, props.uv2_source_u)
-            raw_v = resolve_source_value(mesh, poly, obj, props.uv2_source_v)
-            u_min, u_max = norm_ranges.get(props.uv2_source_u, (None, None))
-            v_min, v_max = norm_ranges.get(props.uv2_source_v, (None, None))
-            u = apply_range_mode(raw_u, props.uv2_range_u, u_min, u_max)
-            v = apply_range_mode(raw_v, props.uv2_range_v, v_min, v_max)
+            src_u, mode_u, umin, umax = channels[0]
+            src_v, mode_v, vmin, vmax = channels[1]
+            u = apply_range_mode(resolve_source_value(mesh, poly, obj, src_u), mode_u, *_resolve_bounds(src_u, mode_u, umin, umax))
+            v = apply_range_mode(resolve_source_value(mesh, poly, obj, src_v), mode_v, *_resolve_bounds(src_v, mode_v, vmin, vmax))
             for li in poly.loop_indices:
                 uv2.data[li].uv = (u, v)
                 count += 1
 
         elif props.uv2_mode == 'GRID':
-            raw_ox = resolve_source_value(mesh, poly, obj, props.uv2_source_u)
-            raw_oy = resolve_source_value(mesh, poly, obj, props.uv2_source_v)
-            raw_ix = resolve_source_value(mesh, poly, obj, props.uv2_source_inner_x)
-            raw_iy = resolve_source_value(mesh, poly, obj, props.uv2_source_inner_y)
-            ox_min, ox_max = norm_ranges.get(props.uv2_source_u, (None, None))
-            oy_min, oy_max = norm_ranges.get(props.uv2_source_v, (None, None))
-            ix_min, ix_max = norm_ranges.get(props.uv2_source_inner_x, (None, None))
-            iy_min, iy_max = norm_ranges.get(props.uv2_source_inner_y, (None, None))
-            outer_x = apply_range_mode(raw_ox, props.uv2_range_u, ox_min, ox_max)
-            outer_y = apply_range_mode(raw_oy, props.uv2_range_v, oy_min, oy_max)
-            inner_x = apply_range_mode(raw_ix, props.uv2_range_inner_x, ix_min, ix_max)
-            inner_y = apply_range_mode(raw_iy, props.uv2_range_inner_y, iy_min, iy_max)
+            src_ox, mode_ox, ox_umin, ox_umax = channels[0]
+            src_oy, mode_oy, oy_umin, oy_umax = channels[1]
+            src_ix, mode_ix, ix_umin, ix_umax = channels[2]
+            src_iy, mode_iy, iy_umin, iy_umax = channels[3]
+            outer_x = apply_range_mode(resolve_source_value(mesh, poly, obj, src_ox), mode_ox, *_resolve_bounds(src_ox, mode_ox, ox_umin, ox_umax))
+            outer_y = apply_range_mode(resolve_source_value(mesh, poly, obj, src_oy), mode_oy, *_resolve_bounds(src_oy, mode_oy, oy_umin, oy_umax))
+            inner_x = apply_range_mode(resolve_source_value(mesh, poly, obj, src_ix), mode_ix, *_resolve_bounds(src_ix, mode_ix, ix_umin, ix_umax))
+            inner_y = apply_range_mode(resolve_source_value(mesh, poly, obj, src_iy), mode_iy, *_resolve_bounds(src_iy, mode_iy, iy_umin, iy_umax))
             grid_uv = map_four_values_to_grid(
                 int(props.encoding_grid_size), outer_x, outer_y, inner_x, inner_y
             )
@@ -270,17 +283,17 @@ def encode_vertex_colors(obj, props, ignore_name=""):
         name=target_name, type='BYTE_COLOR', domain='CORNER'
     )
 
-    # Channel config: (source_name, range_mode)
+    # Channel config: (source_name, range_mode, user_min, user_max)
     channels = [
-        (props.vcol_source_r, props.vcol_range_r),
-        (props.vcol_source_g, props.vcol_range_g),
-        (props.vcol_source_b, props.vcol_range_b),
-        (props.vcol_source_a, props.vcol_range_a),
+        (props.vcol_source_r, props.vcol_range_r, props.vcol_map_min_r, props.vcol_map_max_r),
+        (props.vcol_source_g, props.vcol_range_g, props.vcol_map_min_g, props.vcol_map_max_g),
+        (props.vcol_source_b, props.vcol_range_b, props.vcol_map_min_b, props.vcol_map_max_b),
+        (props.vcol_source_a, props.vcol_range_a, props.vcol_map_min_a, props.vcol_map_max_a),
     ]
 
-    # Pre-pass for NORMALIZE
+    # Pre-pass for NORMALIZE (MAP_TO_RANGE uses user-specified bounds)
     sources_to_normalize = list({
-        src for src, mode in channels if mode == 'NORMALIZE' and src.strip()
+        src for src, mode, _, _ in channels if mode == 'NORMALIZE' and src.strip()
     })
     norm_ranges = {}
     if sources_to_normalize:
@@ -294,17 +307,14 @@ def encode_vertex_colors(obj, props, ignore_name=""):
         if _is_ignored_poly(poly, obj, ignore_name):
             continue
 
-        raw = []
-        for src, _mode in channels:
-            if src.strip():
-                raw.append(resolve_source_value(mesh, poly, obj, src))
-            else:
-                raw.append(0.0)
-
         values = []
-        for i, (src, mode) in enumerate(channels):
-            mn, mx = norm_ranges.get(src, (None, None))
-            values.append(apply_range_mode(raw[i], mode, mn, mx))
+        for src, mode, user_min, user_max in channels:
+            raw = resolve_source_value(mesh, poly, obj, src) if src.strip() else 0.0
+            if mode == 'NORMALIZE':
+                mn, mx = norm_ranges.get(src, (None, None))
+            else:
+                mn, mx = user_min, user_max
+            values.append(apply_range_mode(raw, mode, mn, mx))
 
         for li in poly.loop_indices:
             color_attr.data[li].color = (values[0], values[1], values[2], values[3])
@@ -1158,24 +1168,32 @@ class MaterialPackProperties(PropertyGroup):
         items=_RANGE_MODES,
         default='CLAMP',
     )
+    uv2_map_min_u: bpy.props.FloatProperty(name="Min", description="Minimum value for Map to Range on U / outer X", default=0.0)
+    uv2_map_max_u: bpy.props.FloatProperty(name="Max", description="Maximum value for Map to Range on U / outer X", default=1.0)
     uv2_range_v: EnumProperty(
         name="V / Outer Y Range",
         description="How to handle values outside [0, 1] for V / outer Y",
         items=_RANGE_MODES,
         default='CLAMP',
     )
+    uv2_map_min_v: bpy.props.FloatProperty(name="Min", description="Minimum value for Map to Range on V / outer Y", default=0.0)
+    uv2_map_max_v: bpy.props.FloatProperty(name="Max", description="Maximum value for Map to Range on V / outer Y", default=1.0)
     uv2_range_inner_x: EnumProperty(
         name="Inner X Range",
         description="How to handle values outside [0, 1] for inner grid X",
         items=_RANGE_MODES_NO_NONE,
         default='WRAP',
     )
+    uv2_map_min_inner_x: bpy.props.FloatProperty(name="Min", description="Minimum value for Map to Range on inner grid X", default=0.0)
+    uv2_map_max_inner_x: bpy.props.FloatProperty(name="Max", description="Maximum value for Map to Range on inner grid X", default=1.0)
     uv2_range_inner_y: EnumProperty(
         name="Inner Y Range",
         description="How to handle values outside [0, 1] for inner grid Y",
         items=_RANGE_MODES_NO_NONE,
         default='WRAP',
     )
+    uv2_map_min_inner_y: bpy.props.FloatProperty(name="Min", description="Minimum value for Map to Range on inner grid Y", default=0.0)
+    uv2_map_max_inner_y: bpy.props.FloatProperty(name="Max", description="Maximum value for Map to Range on inner grid Y", default=1.0)
 
     # Vertex Color Encoding
     vcol_enabled: BoolProperty(
@@ -1219,24 +1237,32 @@ class MaterialPackProperties(PropertyGroup):
         items=_RANGE_MODES,
         default='CLAMP',
     )
+    vcol_map_min_r: bpy.props.FloatProperty(name="Min", description="Minimum value for Map to Range on R channel", default=0.0)
+    vcol_map_max_r: bpy.props.FloatProperty(name="Max", description="Maximum value for Map to Range on R channel", default=1.0)
     vcol_range_g: EnumProperty(
         name="G Range",
         description="How to handle values outside [0, 1] for G channel",
         items=_RANGE_MODES,
         default='CLAMP',
     )
+    vcol_map_min_g: bpy.props.FloatProperty(name="Min", description="Minimum value for Map to Range on G channel", default=0.0)
+    vcol_map_max_g: bpy.props.FloatProperty(name="Max", description="Maximum value for Map to Range on G channel", default=1.0)
     vcol_range_b: EnumProperty(
         name="B Range",
         description="How to handle values outside [0, 1] for B channel",
         items=_RANGE_MODES,
         default='CLAMP',
     )
+    vcol_map_min_b: bpy.props.FloatProperty(name="Min", description="Minimum value for Map to Range on B channel", default=0.0)
+    vcol_map_max_b: bpy.props.FloatProperty(name="Max", description="Maximum value for Map to Range on B channel", default=1.0)
     vcol_range_a: EnumProperty(
         name="A Range",
         description="How to handle values outside [0, 1] for A channel",
         items=_RANGE_MODES,
         default='CLAMP',
     )
+    vcol_map_min_a: bpy.props.FloatProperty(name="Min", description="Minimum value for Map to Range on A channel", default=0.0)
+    vcol_map_max_a: bpy.props.FloatProperty(name="Max", description="Maximum value for Map to Range on A channel", default=1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1804,9 +1830,17 @@ class MATERIALPACK_PT_uv2(Panel):
             row = layout.row(align=True)
             row.prop(props, "uv2_source_u", text="U Source")
             row.prop(props, "uv2_range_u", text="")
+            if props.uv2_range_u in _MAP_TO_RANGE_MODES:
+                sub = layout.row(align=True)
+                sub.prop(props, "uv2_map_min_u", text="Min")
+                sub.prop(props, "uv2_map_max_u", text="Max")
             row = layout.row(align=True)
             row.prop(props, "uv2_source_v", text="V Source")
             row.prop(props, "uv2_range_v", text="")
+            if props.uv2_range_v in _MAP_TO_RANGE_MODES:
+                sub = layout.row(align=True)
+                sub.prop(props, "uv2_map_min_v", text="Min")
+                sub.prop(props, "uv2_map_max_v", text="Max")
             layout.label(text="Attribute name, or: roughness / metallic / emission", icon='INFO')
 
         elif props.uv2_mode == 'GRID':
@@ -1815,17 +1849,33 @@ class MATERIALPACK_PT_uv2(Panel):
             row = col.row(align=True)
             row.prop(props, "uv2_source_u", text="X Axis")
             row.prop(props, "uv2_range_u", text="")
+            if props.uv2_range_u in _MAP_TO_RANGE_MODES:
+                sub = col.row(align=True)
+                sub.prop(props, "uv2_map_min_u", text="Min")
+                sub.prop(props, "uv2_map_max_u", text="Max")
             row = col.row(align=True)
             row.prop(props, "uv2_source_v", text="Y Axis")
             row.prop(props, "uv2_range_v", text="")
+            if props.uv2_range_v in _MAP_TO_RANGE_MODES:
+                sub = col.row(align=True)
+                sub.prop(props, "uv2_map_min_v", text="Min")
+                sub.prop(props, "uv2_map_max_v", text="Max")
             col.separator()
             col.label(text="Inner Grid (texture B, A)")
             row = col.row(align=True)
             row.prop(props, "uv2_source_inner_x", text="X Axis")
             row.prop(props, "uv2_range_inner_x", text="")
+            if props.uv2_range_inner_x in _MAP_TO_RANGE_MODES:
+                sub = col.row(align=True)
+                sub.prop(props, "uv2_map_min_inner_x", text="Min")
+                sub.prop(props, "uv2_map_max_inner_x", text="Max")
             row = col.row(align=True)
             row.prop(props, "uv2_source_inner_y", text="Y Axis")
             row.prop(props, "uv2_range_inner_y", text="")
+            if props.uv2_range_inner_y in _MAP_TO_RANGE_MODES:
+                sub = col.row(align=True)
+                sub.prop(props, "uv2_map_min_inner_y", text="Min")
+                sub.prop(props, "uv2_map_max_inner_y", text="Max")
             layout.label(text="Attribute name, or: roughness / metallic / emission", icon='INFO')
 
 
@@ -1853,15 +1903,31 @@ class MATERIALPACK_PT_vcol(Panel):
         row = layout.row(align=True)
         row.prop(props, "vcol_source_r", text="R")
         row.prop(props, "vcol_range_r", text="")
+        if props.vcol_range_r in _MAP_TO_RANGE_MODES:
+            sub = layout.row(align=True)
+            sub.prop(props, "vcol_map_min_r", text="Min")
+            sub.prop(props, "vcol_map_max_r", text="Max")
         row = layout.row(align=True)
         row.prop(props, "vcol_source_g", text="G")
         row.prop(props, "vcol_range_g", text="")
+        if props.vcol_range_g in _MAP_TO_RANGE_MODES:
+            sub = layout.row(align=True)
+            sub.prop(props, "vcol_map_min_g", text="Min")
+            sub.prop(props, "vcol_map_max_g", text="Max")
         row = layout.row(align=True)
         row.prop(props, "vcol_source_b", text="B")
         row.prop(props, "vcol_range_b", text="")
+        if props.vcol_range_b in _MAP_TO_RANGE_MODES:
+            sub = layout.row(align=True)
+            sub.prop(props, "vcol_map_min_b", text="Min")
+            sub.prop(props, "vcol_map_max_b", text="Max")
         row = layout.row(align=True)
         row.prop(props, "vcol_source_a", text="A")
         row.prop(props, "vcol_range_a", text="")
+        if props.vcol_range_a in _MAP_TO_RANGE_MODES:
+            sub = layout.row(align=True)
+            sub.prop(props, "vcol_map_min_a", text="Min")
+            sub.prop(props, "vcol_map_max_a", text="Max")
 
         layout.label(text="Attribute name, or: roughness / metallic / emission", icon='INFO')
 
