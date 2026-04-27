@@ -974,6 +974,14 @@ def process_single_object(context, props, source, materials_data, image_width, i
 # ---------------------------------------------------------------------------
 
 class MaterialPackProperties(PropertyGroup):
+    # Settings persistence
+    settings_path: StringProperty(
+        name="Settings File",
+        description="Path for saving and loading addon settings (separate from the material manifest)",
+        subtype='FILE_PATH',
+        default="//matpack_settings.json",
+    )
+
     # Image settings
     image_width: IntProperty(
         name="Image Width",
@@ -1444,6 +1452,227 @@ class MATERIALPACK_OT_import_materials(Operator):
         return {'FINISHED'}
 
 
+class MATERIALPACK_OT_save_settings(Operator):
+    bl_idname = "materialpack.save_settings"
+    bl_label = "Save Settings"
+    bl_description = "Save all addon settings to a JSON file"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        props = context.scene.material_pack
+        path = bpy.path.abspath(props.settings_path.strip())
+        if not path:
+            self.report({'ERROR'}, "Settings path cannot be empty")
+            return {'CANCELLED'}
+
+        data = {
+            "version": 1,
+            "paths": {
+                "output_path": props.output_path,
+                "json_path": props.json_path,
+                "encoding_grid_output_path": props.encoding_grid_output_path,
+            },
+            "atlas": {
+                "image_width": props.image_width,
+                "image_height": props.image_height,
+                "cell_size": props.cell_size,
+                "encoding_grid_size": props.encoding_grid_size,
+            },
+            "processing": {
+                "output_collection": props.output_collection,
+                "input_collection": props.input_collection,
+                "suffix": props.suffix,
+                "overwrite_existing": props.overwrite_existing,
+                "ignore_hidden": props.ignore_hidden,
+                "apply_modifiers": props.apply_modifiers,
+                "skip_armature_modifiers": props.skip_armature_modifiers,
+                "apply_transform": props.apply_transform,
+                "delete_materials": props.delete_materials,
+                "merge_result": props.merge_result,
+                "import_overwrite": props.import_overwrite,
+                "ignore_material": props.ignore_material.name if props.ignore_material else "",
+                "target_material": props.target_material.name if props.target_material else "",
+            },
+            "cleanup": {
+                "delete_loose": props.delete_loose,
+                "merge_by_distance": props.merge_by_distance,
+                "set_sharpness_by_angle": props.set_sharpness_by_angle,
+                "mark_sharp_as_seams": props.mark_sharp_as_seams,
+                "remove_ignored_faces": props.remove_ignored_faces,
+                "limited_dissolve": props.limited_dissolve,
+            },
+            "uv2": {
+                "mode": props.uv2_mode,
+                "source_u": props.uv2_source_u,
+                "source_v": props.uv2_source_v,
+                "source_inner_x": props.uv2_source_inner_x,
+                "source_inner_y": props.uv2_source_inner_y,
+                "range_u": props.uv2_range_u,
+                "map_min_u": props.uv2_map_min_u,
+                "map_max_u": props.uv2_map_max_u,
+                "range_v": props.uv2_range_v,
+                "map_min_v": props.uv2_map_min_v,
+                "map_max_v": props.uv2_map_max_v,
+                "range_inner_x": props.uv2_range_inner_x,
+                "map_min_inner_x": props.uv2_map_min_inner_x,
+                "map_max_inner_x": props.uv2_map_max_inner_x,
+                "range_inner_y": props.uv2_range_inner_y,
+                "map_min_inner_y": props.uv2_map_min_inner_y,
+                "map_max_inner_y": props.uv2_map_max_inner_y,
+            },
+            "vertex_colors": {
+                "enabled": props.vcol_enabled,
+                "target_name": props.vcol_target_name,
+                "overwrite": props.vcol_overwrite,
+                "source_r": props.vcol_source_r,
+                "source_g": props.vcol_source_g,
+                "source_b": props.vcol_source_b,
+                "source_a": props.vcol_source_a,
+                "range_r": props.vcol_range_r,
+                "map_min_r": props.vcol_map_min_r,
+                "map_max_r": props.vcol_map_max_r,
+                "range_g": props.vcol_range_g,
+                "map_min_g": props.vcol_map_min_g,
+                "map_max_g": props.vcol_map_max_g,
+                "range_b": props.vcol_range_b,
+                "map_min_b": props.vcol_map_min_b,
+                "map_max_b": props.vcol_map_max_b,
+                "range_a": props.vcol_range_a,
+                "map_min_a": props.vcol_map_min_a,
+                "map_max_a": props.vcol_map_max_a,
+            },
+        }
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except OSError as e:
+            self.report({'ERROR'}, f"Could not save settings: {e}")
+            return {'CANCELLED'}
+
+        self.report({'INFO'}, f"Settings saved to {path}")
+        return {'FINISHED'}
+
+
+class MATERIALPACK_OT_load_settings(Operator):
+    bl_idname = "materialpack.load_settings"
+    bl_label = "Load Settings"
+    bl_description = "Load addon settings from a JSON file"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        props = context.scene.material_pack
+        path = bpy.path.abspath(props.settings_path.strip())
+        if not path or not os.path.isfile(path):
+            self.report({'ERROR'}, f"Settings file not found: {path}")
+            return {'CANCELLED'}
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            self.report({'ERROR'}, f"Could not load settings: {e}")
+            return {'CANCELLED'}
+
+        if "paths" in data:
+            p = data["paths"]
+            if "output_path" in p: props.output_path = p["output_path"]
+            if "json_path" in p: props.json_path = p["json_path"]
+            if "encoding_grid_output_path" in p: props.encoding_grid_output_path = p["encoding_grid_output_path"]
+
+        if "atlas" in data:
+            a = data["atlas"]
+            if "image_width" in a: props.image_width = a["image_width"]
+            if "image_height" in a: props.image_height = a["image_height"]
+            if "cell_size" in a: props.cell_size = a["cell_size"]
+            if "encoding_grid_size" in a: props.encoding_grid_size = a["encoding_grid_size"]
+
+        if "processing" in data:
+            p = data["processing"]
+            if "output_collection" in p: props.output_collection = p["output_collection"]
+            if "input_collection" in p: props.input_collection = p["input_collection"]
+            if "suffix" in p: props.suffix = p["suffix"]
+            if "overwrite_existing" in p: props.overwrite_existing = p["overwrite_existing"]
+            if "ignore_hidden" in p: props.ignore_hidden = p["ignore_hidden"]
+            if "apply_modifiers" in p: props.apply_modifiers = p["apply_modifiers"]
+            if "skip_armature_modifiers" in p: props.skip_armature_modifiers = p["skip_armature_modifiers"]
+            if "apply_transform" in p: props.apply_transform = p["apply_transform"]
+            if "delete_materials" in p: props.delete_materials = p["delete_materials"]
+            if "merge_result" in p: props.merge_result = p["merge_result"]
+            if "import_overwrite" in p: props.import_overwrite = p["import_overwrite"]
+            ignore_name = p.get("ignore_material", "")
+            props.ignore_material = bpy.data.materials.get(ignore_name) if ignore_name else None
+            target_name = p.get("target_material", "")
+            props.target_material = bpy.data.materials.get(target_name) if target_name else None
+
+        if "cleanup" in data:
+            c = data["cleanup"]
+            if "delete_loose" in c: props.delete_loose = c["delete_loose"]
+            if "merge_by_distance" in c: props.merge_by_distance = c["merge_by_distance"]
+            if "set_sharpness_by_angle" in c: props.set_sharpness_by_angle = c["set_sharpness_by_angle"]
+            if "mark_sharp_as_seams" in c: props.mark_sharp_as_seams = c["mark_sharp_as_seams"]
+            if "remove_ignored_faces" in c: props.remove_ignored_faces = c["remove_ignored_faces"]
+            if "limited_dissolve" in c: props.limited_dissolve = c["limited_dissolve"]
+
+        if "uv2" in data:
+            u = data["uv2"]
+            if "mode" in u: props.uv2_mode = u["mode"]
+            if "source_u" in u: props.uv2_source_u = u["source_u"]
+            if "source_v" in u: props.uv2_source_v = u["source_v"]
+            if "source_inner_x" in u: props.uv2_source_inner_x = u["source_inner_x"]
+            if "source_inner_y" in u: props.uv2_source_inner_y = u["source_inner_y"]
+            if "range_u" in u: props.uv2_range_u = u["range_u"]
+            if "map_min_u" in u: props.uv2_map_min_u = u["map_min_u"]
+            if "map_max_u" in u: props.uv2_map_max_u = u["map_max_u"]
+            if "range_v" in u: props.uv2_range_v = u["range_v"]
+            if "map_min_v" in u: props.uv2_map_min_v = u["map_min_v"]
+            if "map_max_v" in u: props.uv2_map_max_v = u["map_max_v"]
+            if "range_inner_x" in u: props.uv2_range_inner_x = u["range_inner_x"]
+            if "map_min_inner_x" in u: props.uv2_map_min_inner_x = u["map_min_inner_x"]
+            if "map_max_inner_x" in u: props.uv2_map_max_inner_x = u["map_max_inner_x"]
+            if "range_inner_y" in u: props.uv2_range_inner_y = u["range_inner_y"]
+            if "map_min_inner_y" in u: props.uv2_map_min_inner_y = u["map_min_inner_y"]
+            if "map_max_inner_y" in u: props.uv2_map_max_inner_y = u["map_max_inner_y"]
+
+        if "vertex_colors" in data:
+            v = data["vertex_colors"]
+            if "enabled" in v: props.vcol_enabled = v["enabled"]
+            if "target_name" in v: props.vcol_target_name = v["target_name"]
+            if "overwrite" in v: props.vcol_overwrite = v["overwrite"]
+            if "source_r" in v: props.vcol_source_r = v["source_r"]
+            if "source_g" in v: props.vcol_source_g = v["source_g"]
+            if "source_b" in v: props.vcol_source_b = v["source_b"]
+            if "source_a" in v: props.vcol_source_a = v["source_a"]
+            if "range_r" in v: props.vcol_range_r = v["range_r"]
+            if "map_min_r" in v: props.vcol_map_min_r = v["map_min_r"]
+            if "map_max_r" in v: props.vcol_map_max_r = v["map_max_r"]
+            if "range_g" in v: props.vcol_range_g = v["range_g"]
+            if "map_min_g" in v: props.vcol_map_min_g = v["map_min_g"]
+            if "map_max_g" in v: props.vcol_map_max_g = v["map_max_g"]
+            if "range_b" in v: props.vcol_range_b = v["range_b"]
+            if "map_min_b" in v: props.vcol_map_min_b = v["map_min_b"]
+            if "map_max_b" in v: props.vcol_map_max_b = v["map_max_b"]
+            if "range_a" in v: props.vcol_range_a = v["range_a"]
+            if "map_min_a" in v: props.vcol_map_min_a = v["map_min_a"]
+            if "map_max_a" in v: props.vcol_map_max_a = v["map_max_a"]
+
+        warnings = []
+        if "processing" in data:
+            p = data["processing"]
+            ignore_name = p.get("ignore_material", "")
+            if ignore_name and props.ignore_material is None:
+                warnings.append(f"ignore material '{ignore_name}' not found in scene")
+            target_name = p.get("target_material", "")
+            if target_name and props.target_material is None:
+                warnings.append(f"target material '{target_name}' not found in scene")
+
+        if warnings:
+            self.report({'WARNING'}, f"Settings loaded ({'; '.join(warnings)})")
+        else:
+            self.report({'INFO'}, "Settings loaded")
+        return {'FINISHED'}
+
+
 class MATERIALPACK_OT_process_object(Operator):
     bl_idname = "materialpack.process_object"
     bl_label = "Process Object"
@@ -1660,6 +1889,24 @@ class MATERIALPACK_PT_main(Panel):
             layout.label(text=f"Active Object: {obj.name}")
         else:
             layout.label(text="Active Object: None")
+
+
+class MATERIALPACK_PT_settings(Panel):
+    bl_label = "Load and Save Settings"
+    bl_idname = "MATERIALPACK_PT_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "MatPack"
+    bl_parent_id = "MATERIALPACK_PT_main"
+    bl_options = set()
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.material_pack
+        layout.prop(props, "settings_path")
+        row = layout.row(align=True)
+        row.operator("materialpack.save_settings", icon='FILE_TICK')
+        row.operator("materialpack.load_settings", icon='FILE_FOLDER')
 
 
 class MATERIALPACK_PT_input(Panel):
@@ -1956,9 +2203,12 @@ classes = (
     MATERIALPACK_OT_generate_image,
     MATERIALPACK_OT_generate_encoding_grid,
     MATERIALPACK_OT_import_materials,
+    MATERIALPACK_OT_save_settings,
+    MATERIALPACK_OT_load_settings,
     MATERIALPACK_OT_process_object,
     MATERIALPACK_OT_process_collection,
     MATERIALPACK_PT_main,
+    MATERIALPACK_PT_settings,
     MATERIALPACK_PT_input,
     MATERIALPACK_PT_image,
     MATERIALPACK_PT_texgen,
